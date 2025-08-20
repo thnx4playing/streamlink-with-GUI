@@ -742,10 +742,10 @@ def process_conversions():
                     download_path = get_download_path()
                     input_file = os.path.join(download_path, f"{recording.filename}.ts")
                     
-                                         # Use converted directory for output
-                     converted_path = get_converted_path()
-                     os.makedirs(converted_path, exist_ok=True)
-                     output_file = os.path.join(converted_path, output_filename)
+                    # Use converted directory for output
+                    converted_path = get_converted_path()
+                    os.makedirs(converted_path, exist_ok=True)
+                    output_file = os.path.join(converted_path, output_filename)
                     
                     # Check if input file exists
                     if not os.path.exists(input_file):
