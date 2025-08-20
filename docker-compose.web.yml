@@ -42,15 +42,5 @@ services:
       retries: 3
       start_period: 40s
 
-  # Optional: FFmpeg service for converting TS files to MP4
-  ffmpeg:
-    image: ghcr.io/liofal/ffmpeg6:1.0.0
-    container_name: streamlink-ffmpeg
-    restart: unless-stopped
-    volumes:
-      - ./download:/app/download
-    environment:
-      - SLEEPTIME=600  # Check every 10 minutes
-      - WORKDIR=/app/download
-    depends_on:
-      - streamlink-web
+# FFmpeg is now integrated into the web GUI container
+# No standalone FFmpeg container needed

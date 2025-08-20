@@ -310,12 +310,22 @@ _**Warning:** The folder does not exist in the container and need te be created 
 
 ## FFmpeg Conversion
 
-The `docker-compose.yml` file includes an FFmpeg service that automatically converts TS container files to MP4. The FFmpeg service is configured to run periodically and process files in the `/app/download` directory.
+The web GUI now includes **integrated FFmpeg conversion** that automatically converts TS container files to MP4. This is handled directly within the web GUI container, eliminating the need for a separate FFmpeg service.
 
-- The `SLEEPTIME` environment variable defines the interval (in seconds) between conversion checks. By default, it is set to 600 seconds (10 minutes).
-- The `WORKDIR` environment variable specifies the directory where the TS files are located and where the converted MP4 files will be saved.
+### Conversion Features
 
-To customize the FFmpeg conversion settings, you can modify the environment variables in the `docker-compose.yml` file.
+- **Web-based conversion**: Use the "Conversion" tab in the web GUI
+- **Progress tracking**: Real-time conversion progress monitoring
+- **Batch processing**: Convert multiple recordings at once
+- **Custom naming schemes**: Configure output filename patterns
+- **Database integration**: Conversion status stored in the database
+
+### FFmpeg Configuration
+
+Conversion settings can be configured through the web GUI's "Conversion" tab, including:
+- Output volume path
+- File naming scheme
+- Conversion progress monitoring
 
 # Kubernetes Deployment with Helm
 
