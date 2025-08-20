@@ -32,7 +32,26 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this'
 # Always use a fixed internal path for the database
 # Docker volumes will handle the mapping to host paths
 config_dir = '/app/config'
-os.makedirs(config_dir, exist_ok=True)
+
+# Debug: Check current user and permissions
+import pwd
+try:
+    current_user = pwd.getpwuid(os.getuid()).pw_name
+    logger.info(f"Running as user: {current_user} (UID: {os.getuid()})")
+except:
+    logger.info(f"Running as UID: {os.getuid()}")
+
+# Check if directory exists and is writable
+logger.info(f"Config directory: {config_dir}")
+logger.info(f"Directory exists: {os.path.exists(config_dir)}")
+logger.info(f"Directory writable: {os.access(config_dir, os.W_OK) if os.path.exists(config_dir) else 'N/A'}")
+
+# Try to create directory
+try:
+    os.makedirs(config_dir, exist_ok=True)
+    logger.info(f"Successfully created/accessed config directory: {config_dir}")
+except Exception as e:
+    logger.error(f"Failed to create config directory: {e}")
 
 # Use config directory for database
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{config_dir}/streamlink.db'
