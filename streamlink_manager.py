@@ -50,9 +50,8 @@ class StreamlinkManager:
         # Open the stream
         fd = stream.open()
 
-        # Register signal handlers for SIGTERM and SIGINT to ensure cleanup
-        signal.signal(signal.SIGTERM, lambda *args: self.cleanup(fd, temp_filename, final_filename, *args))
-        signal.signal(signal.SIGINT, lambda *args: self.cleanup(fd, temp_filename, final_filename, *args))
+        # Note: Signal handlers can only be set in the main thread
+        # We'll handle cleanup in the finally block instead
 
         try:
             with open(temp_filename, 'wb') as f:

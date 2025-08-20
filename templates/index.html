@@ -499,16 +499,18 @@
             loadStreamers();
             loadRecentRecordings();
             loadStatus();
+            loadActiveRecordings();
             
             // Auto-refresh every 30 seconds
             setInterval(function() {
                 loadStreamers();
                 loadRecentRecordings();
                 loadStatus();
+                loadActiveRecordings();
             }, 30000);
         });
 
-        // Load streamers
+        // Load streamers with real-time status checking
         async function loadStreamers() {
             try {
                 const response = await fetch('/api/streamers');
@@ -516,6 +518,19 @@
                 
                 const tbody = document.getElementById('streamers-table');
                 tbody.innerHTML = '';
+                
+                // Check status for each streamer
+                for (const streamer of streamers) {
+                    try {
+                        const statusResponse = await fetch(`/api/streamers/${streamer.id}/check`);
+                        const statusData = await statusResponse.json();
+                        streamer.status = statusData.status;
+                        streamer.title = statusData.title;
+                    } catch (error) {
+                        streamer.status = 'ERROR';
+                        streamer.title = '';
+                    }
+                }
                 
                 streamers.forEach(streamer => {
                     const row = document.createElement('tr');
@@ -1079,78 +1094,7 @@
             }, 2000);
         }
 
-        // Enhanced streamer loading with real-time status checking
-        async function loadStreamers() {
-            try {
-                const response = await fetch('/api/streamers');
-                const streamers = await response.json();
-                
-                const tbody = document.getElementById('streamers-table');
-                tbody.innerHTML = '';
-                
-                // Check status for each streamer
-                for (const streamer of streamers) {
-                    try {
-                        const statusResponse = await fetch(`/api/streamers/${streamer.id}/check`);
-                        const statusData = await statusResponse.json();
-                        streamer.status = statusData.status;
-                        streamer.title = statusData.title;
-                    } catch (error) {
-                        streamer.status = 'ERROR';
-                        streamer.title = '';
-                    }
-                }
-                
-                streamers.forEach(streamer => {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td>${streamer.username}</td>
-                        <td>${streamer.twitch_name}</td>
-                        <td>
-                            <span class="status-${streamer.status?.toLowerCase() || 'offline'}">
-                                <i class="fas fa-circle me-1"></i>${streamer.status || 'OFFLINE'}
-                            </span>
-                        </td>
-                        <td>${streamer.quality}</td>
-                        <td>${streamer.timer}</td>
-                        <td>
-                            <span class="badge ${streamer.is_active ? 'bg-success' : 'bg-secondary'}">
-                                ${streamer.is_active ? 'Active' : 'Inactive'}
-                            </span>
-                        </td>
-                        <td>
-                            <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-primary" onclick="editStreamer(${streamer.id})">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                                <button class="btn btn-outline-danger" onclick="deleteStreamer(${streamer.id})">
-                                    <i class="fas fa-trash"></i>
-                                </button>
-                            </div>
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                });
-            } catch (error) {
-                console.error('Error loading streamers:', error);
-            }
-        }
 
-        // Initialize with active recordings
-        document.addEventListener('DOMContentLoaded', function() {
-            loadStreamers();
-            loadRecentRecordings();
-            loadStatus();
-            loadActiveRecordings();
-            
-            // Auto-refresh every 30 seconds
-            setInterval(function() {
-                loadStreamers();
-                loadRecentRecordings();
-                loadStatus();
-                loadActiveRecordings();
-            }, 30000);
-        });
     </script>
 </body>
 </html>
