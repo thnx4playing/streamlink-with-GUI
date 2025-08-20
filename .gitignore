@@ -9,11 +9,11 @@ env.env
 *.sqlite
 *.sqlite3
 
-# Download directory
-download/
+# Download directory (now external)
+# download/
 
-# Data directory
-data/
+# Data directory (now external)
+# data/
 
 # Python
 __pycache__/

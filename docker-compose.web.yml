@@ -10,9 +10,9 @@ services:
     ports:
       - "2344:8080"  # Non-standard port to avoid conflicts
     volumes:
-      - ${DOWNLOAD_VOLUME_PATH:-./download}:/app/download
-      - ${DATA_VOLUME_PATH:-./data}:/app/data  # For database persistence
-      - ${CONFIG_VOLUME_PATH:-./config}:/app/config  # For persistent configurations
+      - ${DOWNLOAD_VOLUME_PATH:-/media/e-flix/docker/streamlink-data/download}:/app/download
+      - ${DATA_VOLUME_PATH:-/media/e-flix/docker/streamlink-data/data}:/app/data  # For database persistence
+      - ${CONFIG_VOLUME_PATH:-/media/e-flix/docker/streamlink-data/config}:/app/config  # For persistent configurations
     environment:
       # Web GUI Configuration
       - PORT=8080
