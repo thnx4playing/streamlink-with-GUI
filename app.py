@@ -87,18 +87,25 @@ class Recording(db.Model):
 class ConversionSettings(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     volume_path = db.Column(db.String(500))
+    output_volume_path = db.Column(db.String(500))  # New: separate output directory
     naming_scheme = db.Column(db.String(50), default='streamer_date_title')
+    custom_filename_template = db.Column(db.String(500))  # New: custom naming template
+    delete_original_after_conversion = db.Column(db.Boolean, default=False)  # New: delete original option
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class ConversionJob(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     recording_id = db.Column(db.Integer, db.ForeignKey('recording.id'), nullable=False)
-    status = db.Column(db.String(20), default='pending')  # pending, converting, completed, failed
+    status = db.Column(db.String(20), default='pending')  # pending, scheduled, converting, completed, failed
     progress = db.Column(db.String(255))
     output_filename = db.Column(db.String(500))
+    scheduled_at = db.Column(db.DateTime)  # New: scheduled time
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     completed_at = db.Column(db.DateTime)
+    schedule_type = db.Column(db.String(20))  # New: immediate, daily, weekly, custom
+    custom_filename = db.Column(db.String(500))  # New: custom filename for this job
+    delete_original = db.Column(db.Boolean, default=False)  # New: delete original for this job
 
 class AppConfig:
     def __init__(self, streamer):
@@ -548,7 +555,10 @@ def get_conversion_settings():
         
         response_data = {
             'volume_path': settings.volume_path or '',
-            'naming_scheme': settings.naming_scheme
+            'output_volume_path': settings.output_volume_path or '',
+            'naming_scheme': settings.naming_scheme,
+            'custom_filename_template': settings.custom_filename_template or '',
+            'delete_original_after_conversion': settings.delete_original_after_conversion
         }
         logger.info(f"Returning settings: {response_data}")
         return jsonify(response_data)
@@ -567,7 +577,10 @@ def save_conversion_settings():
         db.session.add(settings)
     
     settings.volume_path = data.get('volume_path', '')
+    settings.output_volume_path = data.get('output_volume_path', '')
     settings.naming_scheme = data.get('naming_scheme', 'streamer_date_title')
+    settings.custom_filename_template = data.get('custom_filename_template', '')
+    settings.delete_original_after_conversion = data.get('delete_original_after_conversion', False)
     settings.updated_at = datetime.utcnow()
     
     db.session.commit()
@@ -579,21 +592,41 @@ def convert_recordings():
     """API endpoint to start conversion of recordings"""
     data = request.get_json()
     recording_ids = data.get('recording_ids', [])
+    schedule_type = data.get('schedule_type', 'immediate')  # immediate, daily, weekly, custom
+    scheduled_time = data.get('scheduled_time')  # ISO format string
+    custom_filename = data.get('custom_filename', '')  # Custom filename template
+    delete_original = data.get('delete_original', False)  # Delete original after conversion
+    
+    # Parse scheduled time if provided
+    scheduled_datetime = None
+    if scheduled_time and schedule_type != 'immediate':
+        try:
+            scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+        except ValueError:
+            return jsonify({'error': 'Invalid scheduled time format'}), 400
     
     for recording_id in recording_ids:
         # Check if conversion job already exists
         existing_job = ConversionJob.query.filter_by(recording_id=recording_id).first()
         if not existing_job:
-            job = ConversionJob(recording_id=recording_id)
+            job = ConversionJob(
+                recording_id=recording_id,
+                schedule_type=schedule_type,
+                scheduled_at=scheduled_datetime,
+                custom_filename=custom_filename,
+                delete_original=delete_original
+            )
             db.session.add(job)
     
     db.session.commit()
     
-    # Start conversion process in background
-    thread = threading.Thread(target=process_conversions, daemon=True)
-    thread.start()
-    
-    return jsonify({'message': 'Conversion started'})
+    # Start conversion process in background (for immediate conversions)
+    if schedule_type == 'immediate':
+        thread = threading.Thread(target=process_conversions, daemon=True)
+        thread.start()
+        return jsonify({'message': 'Conversion started immediately'})
+    else:
+        return jsonify({'message': f'Conversion scheduled for {scheduled_datetime}' if scheduled_datetime else 'Conversion scheduled'})
 
 @app.route('/health')
 def health_check():
@@ -603,31 +636,82 @@ def health_check():
 @app.route('/api/conversion-progress')
 def get_conversion_progress():
     """API endpoint to get conversion progress"""
-    jobs = ConversionJob.query.all()
+    jobs = ConversionJob.query.order_by(ConversionJob.created_at.desc()).all()
     
     conversions = []
     for job in jobs:
         recording = Recording.query.get(job.recording_id)
         conversions.append({
+            'job_id': job.id,
             'recording_id': job.recording_id,
             'filename': recording.filename if recording else 'Unknown',
             'status': job.status,
             'progress': job.progress,
-            'output_filename': job.output_filename
+            'output_filename': job.output_filename,
+            'schedule_type': job.schedule_type,
+            'scheduled_at': job.scheduled_at.isoformat() if job.scheduled_at else None,
+            'started_at': job.started_at.isoformat() if job.started_at else None,
+            'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+            'custom_filename': job.custom_filename,
+            'delete_original': job.delete_original
         })
     
     return jsonify({'conversions': conversions})
+
+@app.route('/api/conversion-jobs/<int:job_id>', methods=['DELETE'])
+def cancel_conversion_job(job_id):
+    """API endpoint to cancel a conversion job"""
+    job = ConversionJob.query.get_or_404(job_id)
+    
+    if job.status in ['completed', 'failed']:
+        return jsonify({'error': 'Cannot cancel completed or failed jobs'}), 400
+    
+    db.session.delete(job)
+    db.session.commit()
+    
+    return jsonify({'message': 'Conversion job cancelled successfully'})
+
+@app.route('/api/conversion-jobs/<int:job_id>/reschedule', methods=['POST'])
+def reschedule_conversion_job(job_id):
+    """API endpoint to reschedule a conversion job"""
+    job = ConversionJob.query.get_or_404(job_id)
+    data = request.get_json()
+    
+    if job.status in ['completed', 'failed']:
+        return jsonify({'error': 'Cannot reschedule completed or failed jobs'}), 400
+    
+    # Parse new scheduled time
+    scheduled_time = data.get('scheduled_time')
+    if scheduled_time:
+        try:
+            job.scheduled_at = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+        except ValueError:
+            return jsonify({'error': 'Invalid scheduled time format'}), 400
+    
+    job.schedule_type = data.get('schedule_type', job.schedule_type)
+    job.status = 'pending'  # Reset to pending
+    db.session.commit()
+    
+    return jsonify({'message': 'Conversion job rescheduled successfully'})
 
 def process_conversions():
     """Background function to process conversions using FFmpeg"""
     with app.app_context():
         while True:
-            pending_jobs = ConversionJob.query.filter_by(status='pending').all()
+            # Get jobs that are ready to process (pending and scheduled)
+            now = datetime.utcnow()
+            ready_jobs = ConversionJob.query.filter(
+                db.or_(
+                    db.and_(ConversionJob.status == 'pending', ConversionJob.schedule_type == 'immediate'),
+                    db.and_(ConversionJob.status == 'pending', ConversionJob.scheduled_at <= now)
+                )
+            ).all()
             
-            for job in pending_jobs:
+            for job in ready_jobs:
                 try:
                     job.status = 'converting'
                     job.progress = 'Starting conversion...'
+                    job.started_at = datetime.utcnow()
                     db.session.commit()
                     
                     # Get recording details
@@ -645,13 +729,20 @@ def process_conversions():
                         db.session.add(settings)
                         db.session.commit()
                     
-                    # Build output filename based on naming scheme
-                    output_filename = build_output_filename(recording, settings.naming_scheme)
+                    # Build output filename (use custom filename if provided)
+                    if job.custom_filename:
+                        output_filename = build_custom_filename(job.custom_filename, recording)
+                    else:
+                        output_filename = build_output_filename(recording, settings.naming_scheme)
                     
                     # Get input and output paths
                     download_path = get_download_path()
                     input_file = os.path.join(download_path, f"{recording.filename}.ts")
-                    output_file = os.path.join(download_path, output_filename)
+                    
+                    # Use custom output path if specified
+                    output_path = settings.output_volume_path if settings.output_volume_path else download_path
+                    os.makedirs(output_path, exist_ok=True)
+                    output_file = os.path.join(output_path, output_filename)
                     
                     # Check if input file exists
                     if not os.path.exists(input_file):
@@ -681,6 +772,14 @@ def process_conversions():
                         job.completed_at = datetime.utcnow()
                         db.session.commit()
                         logger.info(f"Successfully converted {input_file} to {output_file}")
+                        
+                        # Delete original file if requested
+                        if job.delete_original and os.path.exists(input_file):
+                            try:
+                                os.remove(input_file)
+                                logger.info(f"Deleted original file: {input_file}")
+                            except Exception as e:
+                                logger.error(f"Failed to delete original file {input_file}: {e}")
                     else:
                         job.status = 'failed'
                         job.progress = 'FFmpeg conversion failed'
@@ -765,6 +864,36 @@ def build_output_filename(recording, naming_scheme):
         return f"{streamer_name} - {safe_title} - {date_str}.mp4"
     else:
         return f"{streamer_name} - {date_str} - {safe_title}.mp4"
+
+def build_custom_filename(template, recording):
+    """Build custom filename using template variables"""
+    streamer = Streamer.query.get(recording.streamer_id)
+    streamer_name = streamer.username if streamer else 'unknown'
+    twitch_name = streamer.twitch_name if streamer else 'unknown'
+    
+    # Clean title for filename
+    safe_title = "".join(c for c in (recording.title or 'untitled') if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    
+    # Get date and time from recording start time
+    date_str = recording.started_at.strftime('%Y-%m-%d')
+    time_str = recording.started_at.strftime('%H-%M-%S')
+    datetime_str = recording.started_at.strftime('%Y-%m-%d_%H-%M-%S')
+    
+    # Replace template variables
+    filename = template
+    filename = filename.replace('{streamer}', streamer_name)
+    filename = filename.replace('{twitch_name}', twitch_name)
+    filename = filename.replace('{title}', safe_title)
+    filename = filename.replace('{date}', date_str)
+    filename = filename.replace('{time}', time_str)
+    filename = filename.replace('{datetime}', datetime_str)
+    filename = filename.replace('{game}', recording.game or 'unknown')
+    
+    # Ensure it ends with .mp4
+    if not filename.endswith('.mp4'):
+        filename += '.mp4'
+    
+    return filename
 
 if __name__ == '__main__':
     # Create database tables with retry logic
