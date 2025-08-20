@@ -1,7 +1,5 @@
 version: '3.8'
 
-name: streamlink-web-gui
-
 services:
   streamlink-web:
     build:
