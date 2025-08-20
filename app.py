@@ -917,6 +917,27 @@ def process_conversions():
                         job.status = 'completed'
                         job.progress = f'Batch conversion completed: {converted_count} converted, {failed_count} failed'
                         job.completed_at = datetime.utcnow()
+                        
+                        # Handle recurring tasks
+                        if job.schedule_type in ['daily', 'weekly']:
+                            # Calculate next run time
+                            if job.schedule_type == 'daily':
+                                next_run = job.scheduled_at + timedelta(days=1)
+                            else:  # weekly
+                                next_run = job.scheduled_at + timedelta(weeks=1)
+                            
+                            # Create next recurring job
+                            next_job = ConversionJob(
+                                recording_id=None,  # Template job
+                                schedule_type=job.schedule_type,
+                                scheduled_at=next_run,
+                                custom_filename=job.custom_filename,
+                                delete_original=job.delete_original,
+                                status='pending'
+                            )
+                            db.session.add(next_job)
+                            logger.info(f"Created next {job.schedule_type} recurring job for {next_run}")
+                        
                         db.session.commit()
                         continue
                     

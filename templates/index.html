@@ -1191,7 +1191,7 @@
                         
                         const scheduledDate = job.scheduled_at ? new Date(job.scheduled_at).toLocaleString() : 'No date';
                         const lastRunDate = job.completed_at ? new Date(job.completed_at).toLocaleString() : 
-                                           (job.started_at ? new Date(job.started_at).toLocaleString() : 'Never');
+                                           (job.started_at ? new Date(job.started_at).toLocaleString() : 'Pending');
                         const lastRunStatus = job.status === 'completed' ? 'Completed' : 
                                              (job.status === 'failed' ? 'Failed' : 
                                              (job.status === 'converting' ? 'Running' : 'Pending'));
@@ -1201,7 +1201,7 @@
                                 <div class="fw-bold small">${job.filename || 'Template Task'}</div>
                                 <div class="text-muted small">
                                     ${job.scheduled_at ? `Scheduled: ${scheduledDate}` : 'No schedule'}
-                                    <br>Last Run: ${lastRunDate} (${lastRunStatus})
+                                    <br>Last Run: ${lastRunStatus === 'Pending' ? 'Pending' : `${lastRunDate} (${lastRunStatus})`}
                                 </div>
                                 <div class="text-info small">${job.schedule_type || 'Manual'}</div>
                                 ${job.progress ? `<div class="text-muted small">${job.progress}</div>` : ''}
