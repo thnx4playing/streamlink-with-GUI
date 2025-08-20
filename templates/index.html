@@ -401,10 +401,20 @@
                                 <div class="row">
                                     <div class="col-md-6">
                                         <div class="mb-3">
-                                            <label for="conversion-volume-path" class="form-label">Volume Path</label>
+                                            <label for="conversion-volume-path" class="form-label">Input Volume Path</label>
                                             <input type="text" class="form-control" id="conversion-volume-path" placeholder="/path/to/your/download/directory">
+                                            <small class="form-text text-muted">Directory containing TS files to convert</small>
                                         </div>
                                     </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="output-volume-path" class="form-label">Output Volume Path</label>
+                                            <input type="text" class="form-control" id="output-volume-path" placeholder="/path/to/your/converted/files">
+                                            <small class="form-text text-muted">Directory for converted MP4 files (optional)</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
                                     <div class="col-md-6">
                                         <div class="mb-3">
                                             <label for="file-naming-scheme" class="form-label">File Naming Scheme</label>
@@ -416,11 +426,80 @@
                                             </select>
                                         </div>
                                     </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="custom-filename-template" class="form-label">Custom Filename Template</label>
+                                            <input type="text" class="form-control" id="custom-filename-template" placeholder="{streamer}_{date}_{title}">
+                                            <small class="form-text text-muted">Use variables: {streamer}, {twitch_name}, {title}, {date}, {time}, {datetime}, {game}</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <div class="form-check">
+                                                <input class="form-check-input" type="checkbox" id="delete-original-after-conversion">
+                                                <label class="form-check-label" for="delete-original-after-conversion">
+                                                    Delete original TS files after successful conversion
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <button type="button" class="btn btn-primary" onclick="saveConversionSettings()">
                                     <i class="fas fa-save me-1"></i>Save Settings
                                 </button>
                             </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Conversion Options Card -->
+            <div class="row mt-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-clock me-2"></i>Conversion Options
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <div class="mb-3">
+                                        <label for="schedule-type" class="form-label">Schedule Type</label>
+                                        <select class="form-select" id="schedule-type" onchange="toggleScheduleOptions()">
+                                            <option value="immediate">Immediate</option>
+                                            <option value="scheduled">Scheduled</option>
+                                            <option value="daily">Daily</option>
+                                            <option value="weekly">Weekly</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="mb-3" id="scheduled-time-group" style="display: none;">
+                                        <label for="scheduled-time" class="form-label">Scheduled Time</label>
+                                        <input type="datetime-local" class="form-control" id="scheduled-time">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="mb-3">
+                                        <label for="conversion-custom-filename" class="form-label">Custom Filename (Optional)</label>
+                                        <input type="text" class="form-control" id="conversion-custom-filename" placeholder="Override filename template">
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="mb-3">
+                                        <div class="form-check mt-4">
+                                            <input class="form-check-input" type="checkbox" id="conversion-delete-original">
+                                            <label class="form-check-label" for="conversion-delete-original">
+                                                Delete original after conversion
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -469,6 +548,27 @@
                 </div>
             </div>
 
+            <!-- Conversion Progress Section -->
+            <div class="row mt-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">
+                                <i class="fas fa-tasks me-2"></i>Conversion Progress
+                            </h5>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="refreshConversionProgress()">
+                                <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="conversion-progress-list">
+                                <!-- Conversion progress will be shown here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Conversion Progress Modal -->
             <div class="modal fade" id="conversionProgressModal" tabindex="-1">
                 <div class="modal-dialog modal-lg">
@@ -478,7 +578,7 @@
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body">
-                            <div id="conversion-progress-list">
+                            <div id="conversion-progress-list-modal">
                                 <!-- Conversion progress will be shown here -->
                             </div>
                         </div>
@@ -851,6 +951,7 @@
                 console.log('Loading conversion tab data...');
                 loadRecordingsForConversion();
                 loadConversionSettings();
+                refreshConversionProgress();
             } else if (tabName === 'dashboard') {
                 console.log('Loading dashboard tab data...');
                 loadStreamers();
@@ -922,6 +1023,84 @@
                 } catch (error) {
                     console.error('Error stopping recording:', error);
                     alert('Error stopping recording');
+                }
+            }
+        }
+
+        // Toggle schedule options visibility
+        function toggleScheduleOptions() {
+            const scheduleType = document.getElementById('schedule-type').value;
+            const scheduledTimeGroup = document.getElementById('scheduled-time-group');
+            
+            if (scheduleType === 'scheduled' || scheduleType === 'daily' || scheduleType === 'weekly') {
+                scheduledTimeGroup.style.display = 'block';
+            } else {
+                scheduledTimeGroup.style.display = 'none';
+            }
+        }
+
+        // Refresh conversion progress
+        async function refreshConversionProgress() {
+            try {
+                const response = await fetch('/api/conversion-progress');
+                const data = await response.json();
+                
+                const progressList = document.getElementById('conversion-progress-list');
+                progressList.innerHTML = '';
+                
+                if (data.conversions && data.conversions.length > 0) {
+                    data.conversions.forEach(conversion => {
+                        const div = document.createElement('div');
+                        div.className = 'd-flex justify-content-between align-items-center mb-2 p-3 border rounded';
+                        
+                        const statusClass = conversion.status === 'completed' ? 'bg-success' : 
+                                          conversion.status === 'failed' ? 'bg-danger' : 
+                                          conversion.status === 'converting' ? 'bg-warning' : 'bg-secondary';
+                        
+                        div.innerHTML = `
+                            <div>
+                                <div class="fw-bold">${conversion.filename}</div>
+                                <div class="text-muted">${conversion.progress || 'No progress info'}</div>
+                                <small class="text-info">Schedule: ${conversion.schedule_type || 'immediate'}</small>
+                            </div>
+                            <div class="text-end">
+                                <span class="badge ${statusClass}">${conversion.status.toUpperCase()}</span>
+                                <div class="small text-muted">${conversion.output_filename || ''}</div>
+                                <div class="mt-1">
+                                    <button class="btn btn-sm btn-outline-danger" onclick="cancelConversionJob(${conversion.job_id})" 
+                                            ${conversion.status === 'completed' || conversion.status === 'failed' ? 'disabled' : ''}>
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                        progressList.appendChild(div);
+                    });
+                } else {
+                    progressList.innerHTML = '<div class="text-center text-muted">No conversion jobs found</div>';
+                }
+            } catch (error) {
+                console.error('Error refreshing conversion progress:', error);
+            }
+        }
+
+        // Cancel conversion job
+        async function cancelConversionJob(jobId) {
+            if (confirm('Are you sure you want to cancel this conversion job?')) {
+                try {
+                    const response = await fetch(`/api/conversion-jobs/${jobId}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        refreshConversionProgress();
+                    } else {
+                        const error = await response.json();
+                        alert('Error: ' + error.error);
+                    }
+                } catch (error) {
+                    console.error('Error canceling conversion job:', error);
+                    alert('Error canceling conversion job');
                 }
             }
         }
@@ -1030,24 +1209,27 @@
                 const settings = await response.json();
                 console.log('Conversion settings received:', settings);
                 
-                const volumePathElement = document.getElementById('conversion-volume-path');
-                const namingSchemeElement = document.getElementById('file-naming-scheme');
+                // Update all form elements
+                const elements = {
+                    'conversion-volume-path': settings.volume_path || '',
+                    'output-volume-path': settings.output_volume_path || '',
+                    'file-naming-scheme': settings.naming_scheme || 'streamer_date_title',
+                    'custom-filename-template': settings.custom_filename_template || '',
+                    'delete-original-after-conversion': settings.delete_original_after_conversion || false
+                };
                 
-                console.log('Found volume path element:', volumePathElement);
-                console.log('Found naming scheme element:', namingSchemeElement);
-                
-                if (volumePathElement) {
-                    volumePathElement.value = settings.volume_path || '';
-                    console.log('Set volume path to:', settings.volume_path || '');
-                } else {
-                    console.error('Volume path element not found!');
-                }
-                
-                if (namingSchemeElement) {
-                    namingSchemeElement.value = settings.naming_scheme || 'streamer_date_title';
-                    console.log('Set naming scheme to:', settings.naming_scheme || 'streamer_date_title');
-                } else {
-                    console.error('Naming scheme element not found!');
+                for (const [id, value] of Object.entries(elements)) {
+                    const element = document.getElementById(id);
+                    if (element) {
+                        if (element.type === 'checkbox') {
+                            element.checked = value;
+                        } else {
+                            element.value = value;
+                        }
+                        console.log(`Set ${id} to:`, value);
+                    } else {
+                        console.error(`Element ${id} not found!`);
+                    }
                 }
             } catch (error) {
                 console.error('Error in loadConversionSettings:', error);
@@ -1059,7 +1241,10 @@
         async function saveConversionSettings() {
             const settings = {
                 volume_path: document.getElementById('conversion-volume-path').value,
-                naming_scheme: document.getElementById('file-naming-scheme').value
+                output_volume_path: document.getElementById('output-volume-path').value,
+                naming_scheme: document.getElementById('file-naming-scheme').value,
+                custom_filename_template: document.getElementById('custom-filename-template').value,
+                delete_original_after_conversion: document.getElementById('delete-original-after-conversion').checked
             };
             
             try {
@@ -1092,27 +1277,53 @@
                 return;
             }
             
+            // Get conversion options
+            const scheduleType = document.getElementById('schedule-type').value;
+            const scheduledTime = document.getElementById('scheduled-time').value;
+            const customFilename = document.getElementById('conversion-custom-filename').value;
+            const deleteOriginal = document.getElementById('conversion-delete-original').checked;
+            
+            const conversionData = {
+                recording_ids: recordingIds,
+                schedule_type: scheduleType,
+                custom_filename: customFilename,
+                delete_original: deleteOriginal
+            };
+            
+            // Add scheduled time if not immediate
+            if (scheduleType !== 'immediate' && scheduledTime) {
+                conversionData.scheduled_time = new Date(scheduledTime).toISOString();
+            }
+            
             try {
                 const response = await fetch('/api/convert-recordings', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ recording_ids: recordingIds })
+                    body: JSON.stringify(conversionData)
                 });
                 
                 if (response.ok) {
-                    // Show progress modal
-                    new bootstrap.Modal(document.getElementById('conversionProgressModal')).show();
+                    const result = await response.json();
+                    alert(result.message || 'Conversion started successfully!');
                     
-                    // Start polling for progress
-                    pollConversionProgress(recordingIds);
+                    if (scheduleType === 'immediate') {
+                        // Show progress modal for immediate conversions
+                        new bootstrap.Modal(document.getElementById('conversionProgressModal')).show();
+                        pollConversionProgress(recordingIds);
+                    } else {
+                        // Refresh progress for scheduled conversions
+                        refreshConversionProgress();
+                    }
                     
                     // Update status badges
                     recordingIds.forEach(id => {
                         const statusBadge = document.getElementById(`conversion-status-${id}`);
                         if (statusBadge) {
-                            statusBadge.textContent = 'Converting...';
+                            statusBadge.textContent = scheduleType === 'immediate' ? 'Converting...' : 'Scheduled';
+                        }
+                    });
                             statusBadge.className = 'badge bg-warning';
                         }
                     });
