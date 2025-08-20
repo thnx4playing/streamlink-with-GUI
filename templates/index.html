@@ -1114,26 +1114,61 @@
                 const data = await response.json();
                 
                 const tasksList = document.getElementById('scheduled-tasks-list');
-                const scheduledJobs = data.conversions.filter(job => 
-                    job.status === 'pending' && job.scheduled_at
-                );
                 
-                if (scheduledJobs.length > 0) {
+                // Show all jobs, not just pending ones
+                const allJobs = data.conversions || [];
+                
+                if (allJobs.length > 0) {
                     tasksList.innerHTML = '';
-                    scheduledJobs.forEach(job => {
+                    allJobs.forEach(job => {
                         const div = document.createElement('div');
                         div.className = 'd-flex justify-content-between align-items-center mb-2 p-2 border rounded bg-white';
                         
-                        const scheduledDate = new Date(job.scheduled_at).toLocaleString();
+                        // Determine status badge color
+                        let statusClass = 'bg-secondary';
+                        let statusText = job.status || 'Unknown';
+                        
+                        switch (job.status) {
+                            case 'pending':
+                                statusClass = 'bg-warning';
+                                statusText = 'Scheduled';
+                                break;
+                            case 'converting':
+                                statusClass = 'bg-info';
+                                statusText = 'Running';
+                                break;
+                            case 'completed':
+                                statusClass = 'bg-success';
+                                statusText = 'Finished';
+                                break;
+                            case 'failed':
+                                statusClass = 'bg-danger';
+                                statusText = 'Failed';
+                                break;
+                        }
+                        
+                        const scheduledDate = job.scheduled_at ? new Date(job.scheduled_at).toLocaleString() : 'No date';
+                        const startedDate = job.started_at ? new Date(job.started_at).toLocaleString() : '';
+                        const completedDate = job.completed_at ? new Date(job.completed_at).toLocaleString() : '';
+                        
                         div.innerHTML = `
-                            <div>
-                                <div class="fw-bold small">${job.filename}</div>
-                                <div class="text-muted small">${scheduledDate}</div>
-                                <div class="text-info small">${job.schedule_type}</div>
+                            <div class="flex-grow-1">
+                                <div class="fw-bold small">${job.filename || 'Template Task'}</div>
+                                <div class="text-muted small">
+                                    ${job.scheduled_at ? `Scheduled: ${scheduledDate}` : 'No schedule'}
+                                    ${job.started_at ? `<br>Started: ${startedDate}` : ''}
+                                    ${job.completed_at ? `<br>Completed: ${completedDate}` : ''}
+                                </div>
+                                <div class="text-info small">${job.schedule_type || 'Manual'}</div>
+                                ${job.progress ? `<div class="text-muted small">${job.progress}</div>` : ''}
                             </div>
-                            <button class="btn btn-sm btn-outline-danger" onclick="cancelConversionJob(${job.job_id})">
-                                <i class="fas fa-times"></i>
-                            </button>
+                            <div class="d-flex flex-column align-items-end">
+                                <span class="badge ${statusClass} mb-1">${statusText}</span>
+                                <button class="btn btn-sm btn-outline-danger" onclick="cancelConversionJob(${job.job_id})" 
+                                        ${job.status === 'completed' || job.status === 'failed' ? 'disabled' : ''}>
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
                         `;
                         tasksList.appendChild(div);
                     });
@@ -1142,6 +1177,8 @@
                 }
             } catch (error) {
                 console.error('Error loading scheduled tasks:', error);
+                const tasksList = document.getElementById('scheduled-tasks-list');
+                tasksList.innerHTML = '<div class="text-center text-danger">Error loading scheduled tasks</div>';
             }
         }
 
@@ -1317,7 +1354,35 @@
             try {
                 // Store options in localStorage for persistence
                 localStorage.setItem('conversionOptions', JSON.stringify(options));
-                alert('Conversion options saved successfully!');
+                
+                // If a scheduled time is set, create a scheduled task
+                if (options.scheduled_time) {
+                    // Create a scheduled task for future conversions
+                    const scheduledData = {
+                        schedule_type: options.schedule_type,
+                        scheduled_time: new Date(options.scheduled_time).toISOString(),
+                        custom_filename: options.custom_filename,
+                        delete_original: options.delete_original,
+                        is_template: true  // Mark as a template for future use
+                    };
+                    
+                    const response = await fetch('/api/schedule-template', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(scheduledData)
+                    });
+                    
+                    if (response.ok) {
+                        alert('Conversion options saved and scheduled template created!');
+                        loadScheduledTasks(); // Refresh the scheduled tasks display
+                    } else {
+                        alert('Options saved but failed to create scheduled template');
+                    }
+                } else {
+                    alert('Conversion options saved successfully!');
+                }
             } catch (error) {
                 console.error('Error saving conversion options:', error);
                 alert('Error saving conversion options');

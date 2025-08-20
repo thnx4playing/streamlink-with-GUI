@@ -96,7 +96,7 @@ class ConversionSettings(db.Model):
 
 class ConversionJob(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    recording_id = db.Column(db.Integer, db.ForeignKey('recording.id'), nullable=False)
+    recording_id = db.Column(db.Integer, db.ForeignKey('recording.id'), nullable=True)  # Allow NULL for template jobs
     status = db.Column(db.String(20), default='pending')  # pending, scheduled, converting, completed, failed
     progress = db.Column(db.String(255))
     output_filename = db.Column(db.String(500))
@@ -646,11 +646,11 @@ def get_conversion_progress():
     
     conversions = []
     for job in jobs:
-        recording = Recording.query.get(job.recording_id)
+        recording = Recording.query.get(job.recording_id) if job.recording_id else None
         conversions.append({
             'job_id': job.id,
             'recording_id': job.recording_id,
-            'filename': recording.filename if recording else 'Unknown',
+            'filename': recording.filename if recording else 'Template Job',
             'status': job.status,
             'progress': job.progress,
             'output_filename': job.output_filename,
@@ -700,6 +700,40 @@ def reschedule_conversion_job(job_id):
     
     return jsonify({'message': 'Conversion job rescheduled successfully'})
 
+@app.route('/api/schedule-template', methods=['POST'])
+def create_schedule_template():
+    """API endpoint to create a scheduled template for future conversions"""
+    data = request.get_json()
+    
+    schedule_type = data.get('schedule_type', 'scheduled')
+    scheduled_time = data.get('scheduled_time')
+    custom_filename = data.get('custom_filename', '')
+    delete_original = data.get('delete_original', False)
+    
+    # Parse scheduled time if provided
+    scheduled_datetime = None
+    if scheduled_time:
+        try:
+            scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+        except ValueError:
+            return jsonify({'error': 'Invalid scheduled time format'}), 400
+    
+    # Create a template job (no specific recording_id)
+    template_job = ConversionJob(
+        recording_id=None,  # No specific recording for template
+        schedule_type=schedule_type,
+        scheduled_at=scheduled_datetime,
+        custom_filename=custom_filename,
+        delete_original=delete_original,
+        status='pending'
+    )
+    
+    db.session.add(template_job)
+    db.session.commit()
+    
+    logger.info(f"Created schedule template: {schedule_type} at {scheduled_datetime}")
+    return jsonify({'message': 'Schedule template created successfully', 'job_id': template_job.id})
+
 def process_conversions():
     """Background function to process conversions using FFmpeg"""
     with app.app_context():
@@ -712,6 +746,14 @@ def process_conversions():
             
             for job in ready_jobs:
                 try:
+                    # Skip template jobs (jobs without recording_id) - they're just for scheduling
+                    if not job.recording_id:
+                        job.status = 'completed'
+                        job.progress = 'Template job - no recording to convert'
+                        job.completed_at = datetime.utcnow()
+                        db.session.commit()
+                        continue
+                    
                     job.status = 'converting'
                     job.progress = 'Starting conversion...'
                     job.started_at = datetime.utcnow()
