@@ -926,7 +926,67 @@ if __name__ == '__main__':
             with app.app_context():
                 logger.info(f"Attempt {attempt + 1}: Creating database tables...")
                 db.create_all()
-                logger.info("Database created successfully")
+                
+                # Check if we need to migrate the database schema
+                try:
+                    # Try to access the new columns to see if they exist
+                    with db.engine.connect() as conn:
+                        result = conn.execute(db.text("PRAGMA table_info(conversion_job)"))
+                        columns = [row[1] for row in result.fetchall()]
+                        
+                        # Check if new columns exist
+                        new_columns = ['scheduled_at', 'schedule_type', 'custom_filename', 'delete_original']
+                        missing_columns = [col for col in new_columns if col not in columns]
+                        
+                        if missing_columns:
+                            logger.info(f"Database migration needed. Missing columns: {missing_columns}")
+                            
+                            # Add missing columns
+                            for col in missing_columns:
+                                if col == 'scheduled_at':
+                                    conn.execute(db.text("ALTER TABLE conversion_job ADD COLUMN scheduled_at DATETIME"))
+                                elif col == 'schedule_type':
+                                    conn.execute(db.text("ALTER TABLE conversion_job ADD COLUMN schedule_type VARCHAR(20)"))
+                                elif col == 'custom_filename':
+                                    conn.execute(db.text("ALTER TABLE conversion_job ADD COLUMN custom_filename VARCHAR(500)"))
+                                elif col == 'delete_original':
+                                    conn.execute(db.text("ALTER TABLE conversion_job ADD COLUMN delete_original BOOLEAN DEFAULT 0"))
+                            
+                            conn.commit()
+                            logger.info("Database migration completed successfully")
+                        else:
+                            logger.info("Database schema is up to date")
+                        
+                        # Check conversion_settings table
+                        result = conn.execute(db.text("PRAGMA table_info(conversion_settings)"))
+                        settings_columns = [row[1] for row in result.fetchall()]
+                        
+                        # Check if new columns exist in conversion_settings
+                        new_settings_columns = ['output_volume_path', 'custom_filename_template', 'delete_original_after_conversion']
+                        missing_settings_columns = [col for col in new_settings_columns if col not in settings_columns]
+                        
+                        if missing_settings_columns:
+                            logger.info(f"Conversion settings migration needed. Missing columns: {missing_settings_columns}")
+                            
+                            # Add missing columns
+                            for col in missing_settings_columns:
+                                if col == 'output_volume_path':
+                                    conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN output_volume_path VARCHAR(500)"))
+                                elif col == 'custom_filename_template':
+                                    conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN custom_filename_template VARCHAR(500)"))
+                                elif col == 'delete_original_after_conversion':
+                                    conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN delete_original_after_conversion BOOLEAN DEFAULT 0"))
+                            
+                            conn.commit()
+                            logger.info("Conversion settings migration completed successfully")
+                        else:
+                            logger.info("Conversion settings schema is up to date")
+                            
+                except Exception as migration_error:
+                    logger.warning(f"Database migration check failed: {migration_error}")
+                    # Continue anyway, the app might still work
+                
+                logger.info("Database created/updated successfully")
                 
                 # Check if database file exists and has content
                 db_path = f"{data_dir}/streamlink.db"

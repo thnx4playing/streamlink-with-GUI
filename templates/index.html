@@ -385,9 +385,10 @@
                 </div>
             </div>
         </div>
+    </div>
 
-        <!-- Conversion Tab -->
-        <div id="conversion-tab" style="display: none;">
+    <!-- Conversion Tab -->
+    <div id="conversion-tab" style="display: none;">
             <div class="row">
                 <div class="col-12">
                     <div class="card">
@@ -1317,16 +1318,14 @@
                         refreshConversionProgress();
                     }
                     
-                    // Update status badges
-                    recordingIds.forEach(id => {
-                        const statusBadge = document.getElementById(`conversion-status-${id}`);
-                        if (statusBadge) {
-                            statusBadge.textContent = scheduleType === 'immediate' ? 'Converting...' : 'Scheduled';
-                        }
-                    });
-                            statusBadge.className = 'badge bg-warning';
-                        }
-                    });
+                                         // Update status badges
+                     recordingIds.forEach(id => {
+                         const statusBadge = document.getElementById(`conversion-status-${id}`);
+                         if (statusBadge) {
+                             statusBadge.textContent = scheduleType === 'immediate' ? 'Converting...' : 'Scheduled';
+                             statusBadge.className = 'badge bg-warning';
+                         }
+                     });
                     
                     // Uncheck all checkboxes
                     checkboxes.forEach(cb => cb.checked = false);
