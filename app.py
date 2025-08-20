@@ -31,7 +31,7 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this'
 
 # Always use a fixed internal path for the database
 # Docker volumes will handle the mapping to host paths
-config_dir = '/app/config'
+data_dir = '/app/data'
 
 # Debug: Check current user and permissions
 import pwd
@@ -42,19 +42,19 @@ except:
     logger.info(f"Running as UID: {os.getuid()}")
 
 # Check if directory exists and is writable
-logger.info(f"Config directory: {config_dir}")
-logger.info(f"Directory exists: {os.path.exists(config_dir)}")
-logger.info(f"Directory writable: {os.access(config_dir, os.W_OK) if os.path.exists(config_dir) else 'N/A'}")
+logger.info(f"Data directory: {data_dir}")
+logger.info(f"Directory exists: {os.path.exists(data_dir)}")
+logger.info(f"Directory writable: {os.access(data_dir, os.W_OK) if os.path.exists(data_dir) else 'N/A'}")
 
 # Try to create directory
 try:
-    os.makedirs(config_dir, exist_ok=True)
-    logger.info(f"Successfully created/accessed config directory: {config_dir}")
+    os.makedirs(data_dir, exist_ok=True)
+    logger.info(f"Successfully created/accessed data directory: {data_dir}")
 except Exception as e:
-    logger.error(f"Failed to create config directory: {e}")
+    logger.error(f"Failed to create data directory: {e}")
 
-# Use config directory for database
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{config_dir}/streamlink.db'
+# Use data directory for database (persistent volume)
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{data_dir}/streamlink.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -643,8 +643,8 @@ if __name__ == '__main__':
                 retry_delay *= 2  # Exponential backoff
             else:
                 logger.error(f"Failed to create database after {max_retries} attempts: {e}")
-                # Try multiple fallback locations
-                fallback_paths = ['/tmp/streamlink.db', '/app/streamlink.db', './streamlink.db']
+                # Try multiple fallback locations (in order of preference)
+                fallback_paths = ['/app/config/streamlink.db', '/tmp/streamlink.db', './streamlink.db']
                 
                 for fallback_path in fallback_paths:
                     try:
