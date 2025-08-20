@@ -7,7 +7,7 @@ import json
 import threading
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -388,7 +388,19 @@ def get_recordings():
         
         logger.info(f"Fetching recordings: page={page}, per_page={per_page}")
         
-        recordings = Recording.query.order_by(Recording.started_at.desc()).paginate(
+        # Filter out recordings that have been converted
+        # Get all recording IDs that have completed conversion jobs
+        converted_recording_ids = db.session.query(ConversionJob.recording_id).filter(
+            ConversionJob.status == 'completed'
+        ).distinct().all()
+        converted_ids = [r[0] for r in converted_recording_ids if r[0] is not None]
+        
+        # Query recordings excluding converted ones
+        recordings_query = Recording.query
+        if converted_ids:
+            recordings_query = recordings_query.filter(~Recording.id.in_(converted_ids))
+        
+        recordings = recordings_query.order_by(Recording.started_at.desc()).paginate(
             page=page, per_page=per_page, error_out=False
         )
         
@@ -604,7 +616,15 @@ def convert_recordings():
     schedule_type = data.get('schedule_type', 'scheduled')  # scheduled, daily, weekly, custom
     scheduled_time = data.get('scheduled_time')  # ISO format string
     custom_filename = data.get('custom_filename', '')  # Custom filename template
-    delete_original = data.get('delete_original', False)  # Delete original after conversion
+    
+    # Get global delete setting from conversion settings
+    settings = ConversionSettings.query.first()
+    if not settings:
+        settings = ConversionSettings()
+        db.session.add(settings)
+        db.session.commit()
+    
+    delete_original = settings.delete_original_after_conversion
     
     # Parse scheduled time if provided
     scheduled_datetime = None
@@ -641,11 +661,16 @@ def health_check():
 
 @app.route('/api/conversion-progress')
 def get_conversion_progress():
-    """API endpoint to get conversion progress"""
-    jobs = ConversionJob.query.order_by(ConversionJob.created_at.desc()).all()
+    """API endpoint to get conversion progress with pagination"""
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 10, type=int)  # Default 10 per page
+    
+    jobs = ConversionJob.query.order_by(ConversionJob.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
     
     conversions = []
-    for job in jobs:
+    for job in jobs.items:
         recording = Recording.query.get(job.recording_id) if job.recording_id else None
         conversions.append({
             'job_id': job.id,
@@ -662,7 +687,13 @@ def get_conversion_progress():
             'delete_original': job.delete_original
         })
     
-    return jsonify({'conversions': conversions})
+    return jsonify({
+        'conversions': conversions,
+        'total': jobs.total,
+        'pages': jobs.pages,
+        'current_page': page,
+        'per_page': per_page
+    })
 
 @app.route('/api/conversion-jobs/<int:job_id>', methods=['DELETE'])
 def cancel_conversion_job(job_id):
@@ -708,7 +739,15 @@ def create_schedule_template():
     schedule_type = data.get('schedule_type', 'scheduled')
     scheduled_time = data.get('scheduled_time')
     custom_filename = data.get('custom_filename', '')
-    delete_original = data.get('delete_original', False)
+    
+    # Get global delete setting from conversion settings
+    settings = ConversionSettings.query.first()
+    if not settings:
+        settings = ConversionSettings()
+        db.session.add(settings)
+        db.session.commit()
+    
+    delete_original = settings.delete_original_after_conversion
     
     # Parse scheduled time if provided
     scheduled_datetime = None
@@ -746,10 +785,114 @@ def process_conversions():
             
             for job in ready_jobs:
                 try:
-                    # Skip template jobs (jobs without recording_id) - they're just for scheduling
+                    # Handle template jobs (jobs without recording_id) - convert all files in download directory
                     if not job.recording_id:
+                        job.status = 'converting'
+                        job.progress = 'Processing all files in download directory...'
+                        job.started_at = datetime.utcnow()
+                        db.session.commit()
+                        
+                        # Get all TS files in download directory
+                        download_path = get_download_path()
+                        ts_files = []
+                        if os.path.exists(download_path):
+                            for file in os.listdir(download_path):
+                                if file.endswith('.ts'):
+                                    ts_files.append(file)
+                        
+                        if not ts_files:
+                            job.status = 'completed'
+                            job.progress = 'No TS files found in download directory'
+                            job.completed_at = datetime.utcnow()
+                            db.session.commit()
+                            continue
+                        
+                        # Get conversion settings
+                        settings = ConversionSettings.query.first()
+                        if not settings:
+                            settings = ConversionSettings()
+                            db.session.add(settings)
+                            db.session.commit()
+                        
+                        # Process each TS file
+                        converted_count = 0
+                        failed_count = 0
+                        
+                        for ts_file in ts_files:
+                            try:
+                                # Find corresponding recording
+                                filename_without_ext = ts_file[:-3]  # Remove .ts extension
+                                recording = Recording.query.filter_by(filename=filename_without_ext).first()
+                                
+                                if not recording:
+                                    # Skip files without corresponding recording
+                                    continue
+                                
+                                # Check if already converted
+                                existing_job = ConversionJob.query.filter_by(
+                                    recording_id=recording.id, 
+                                    status='completed'
+                                ).first()
+                                
+                                if existing_job:
+                                    # Already converted, skip
+                                    continue
+                                
+                                # Build output filename
+                                if job.custom_filename:
+                                    output_filename = build_custom_filename(job.custom_filename, recording)
+                                elif settings.custom_filename_template:
+                                    output_filename = build_custom_filename(settings.custom_filename_template, recording)
+                                else:
+                                    output_filename = build_output_filename(recording, 'streamer_date_title')
+                                
+                                # Get paths
+                                input_file = os.path.join(download_path, ts_file)
+                                converted_path = get_converted_path()
+                                os.makedirs(converted_path, exist_ok=True)
+                                output_file = os.path.join(converted_path, output_filename)
+                                
+                                # Check if output already exists
+                                if os.path.exists(output_file):
+                                    continue
+                                
+                                # Convert file
+                                success = convert_ts_to_mp4(input_file, output_file, None)  # No job object for batch processing
+                                
+                                if success:
+                                    # Create conversion job record for this file
+                                    file_job = ConversionJob(
+                                        recording_id=recording.id,
+                                        status='completed',
+                                        progress='Converted by scheduled task',
+                                        output_filename=output_filename,
+                                        started_at=datetime.utcnow(),
+                                        completed_at=datetime.utcnow(),
+                                        schedule_type=job.schedule_type,
+                                        custom_filename=job.custom_filename,
+                                        delete_original=settings.delete_original_after_conversion  # Use global setting
+                                    )
+                                    db.session.add(file_job)
+                                    
+                                    # Delete original if requested
+                                    if settings.delete_original_after_conversion and os.path.exists(input_file):
+                                        try:
+                                            os.remove(input_file)
+                                            logger.info(f"Deleted original file: {input_file}")
+                                        except Exception as e:
+                                            logger.error(f"Failed to delete original file {input_file}: {e}")
+                                    
+                                    converted_count += 1
+                                else:
+                                    failed_count += 1
+                                    
+                            except Exception as e:
+                                logger.error(f"Error processing {ts_file}: {e}")
+                                failed_count += 1
+                        
+                        # Update template job status
                         job.status = 'completed'
-                        job.progress = 'Template job - no recording to convert'
+                        job.progress = f'Batch conversion completed: {converted_count} converted, {failed_count} failed'
                         job.completed_at = datetime.utcnow()
                         db.session.commit()
                         continue
