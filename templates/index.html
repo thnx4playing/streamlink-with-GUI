@@ -46,6 +46,16 @@
         .stats-card {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
+            height: 120px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .stats-card .card-body {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
         
         .refresh-btn {
@@ -141,7 +151,7 @@
                         <div class="d-flex justify-content-between">
                             <div>
                                 <h6 class="card-title">Volume Path</h6>
-                                <small id="download-path">./download</small>
+                                <div class="small" id="download-path" style="word-break: break-all;">./download</div>
                             </div>
                             <div class="align-self-center">
                                 <i class="fas fa-folder fa-2x"></i>
@@ -807,6 +817,11 @@
             if (tabName === 'conversion') {
                 loadRecordingsForConversion();
                 loadConversionSettings();
+            } else if (tabName === 'dashboard') {
+                loadStreamers();
+                loadRecentRecordings();
+                loadStatus();
+                loadActiveRecordings();
             }
         }
 

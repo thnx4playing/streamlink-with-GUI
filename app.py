@@ -248,10 +248,11 @@ def add_streamer():
     if not data.get('username') or not data.get('twitch_name'):
         return jsonify({'error': 'Username and Twitch name are required'}), 400
     
-    # Check if streamer already exists
-    existing = Streamer.query.filter_by(username=data['username']).first()
-    if existing:
-        return jsonify({'error': 'Streamer already exists'}), 400
+    # Check if streamer already exists (check both username and twitch_name)
+    existing_username = Streamer.query.filter_by(username=data['username']).first()
+    existing_twitch = Streamer.query.filter_by(twitch_name=data['twitch_name']).first()
+    if existing_username or existing_twitch:
+        return jsonify({'error': 'Streamer already exists (check username and Twitch name)'}), 400
     
     # Create new streamer
     streamer = Streamer(
