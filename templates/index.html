@@ -1145,8 +1145,15 @@
         // Load scheduled tasks
         async function loadScheduledTasks() {
             try {
+                console.log('Loading scheduled tasks...');
                 const response = await fetch('/api/conversion-progress?per_page=5');  // Show only 5 most recent
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const data = await response.json();
+                console.log('Scheduled tasks data:', data);
                 
                 const tasksList = document.getElementById('scheduled-tasks-list');
                 
@@ -1213,7 +1220,7 @@
             } catch (error) {
                 console.error('Error loading scheduled tasks:', error);
                 const tasksList = document.getElementById('scheduled-tasks-list');
-                tasksList.innerHTML = '<div class="text-center text-danger">Error loading scheduled tasks</div>';
+                tasksList.innerHTML = `<div class="text-center text-danger">Error loading scheduled tasks: ${error.message}</div>`;
             }
         }
 
@@ -1392,12 +1399,11 @@
                 // If a scheduled time is set, create a scheduled task
                 if (options.scheduled_time) {
                     // Create a scheduled task for future conversions
-                                         const scheduledData = {
-                         schedule_type: options.schedule_type,
-                         scheduled_time: new Date(options.scheduled_time).toISOString(),
-                         custom_filename: options.custom_filename,
-                         is_template: true  // Mark as a template for future use
-                     };
+                    const scheduledData = {
+                        schedule_type: options.schedule_type,
+                        scheduled_time: new Date(options.scheduled_time).toISOString(),
+                        custom_filename: options.custom_filename
+                    };
                     
                     const response = await fetch('/api/schedule-template', {
                         method: 'POST',
@@ -1408,10 +1414,13 @@
                     });
                     
                     if (response.ok) {
+                        const result = await response.json();
                         alert('Conversion options saved and scheduled template created!');
                         loadScheduledTasks(); // Refresh the scheduled tasks display
                     } else {
-                        alert('Options saved but failed to create scheduled template');
+                        const errorData = await response.json();
+                        const errorMessage = errorData.error || 'Unknown error';
+                        alert(`Options saved but failed to create scheduled template: ${errorMessage}`);
                     }
                 } else {
                     alert('Conversion options saved successfully!');

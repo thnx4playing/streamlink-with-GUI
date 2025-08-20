@@ -662,38 +662,49 @@ def health_check():
 @app.route('/api/conversion-progress')
 def get_conversion_progress():
     """API endpoint to get conversion progress with pagination"""
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 10, type=int)  # Default 10 per page
-    
-    jobs = ConversionJob.query.order_by(ConversionJob.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-    
-    conversions = []
-    for job in jobs.items:
-        recording = Recording.query.get(job.recording_id) if job.recording_id else None
-        conversions.append({
-            'job_id': job.id,
-            'recording_id': job.recording_id,
-            'filename': recording.filename if recording else 'Template Job',
-            'status': job.status,
-            'progress': job.progress,
-            'output_filename': job.output_filename,
-            'schedule_type': job.schedule_type,
-            'scheduled_at': job.scheduled_at.isoformat() if job.scheduled_at else None,
-            'started_at': job.started_at.isoformat() if job.started_at else None,
-            'completed_at': job.completed_at.isoformat() if job.completed_at else None,
-            'custom_filename': job.custom_filename,
-            'delete_original': job.delete_original
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 10, type=int)  # Default 10 per page
+        
+        logger.info(f"Fetching conversion progress: page={page}, per_page={per_page}")
+        
+        jobs = ConversionJob.query.order_by(ConversionJob.id.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        conversions = []
+        for job in jobs.items:
+            try:
+                recording = Recording.query.get(job.recording_id) if job.recording_id else None
+                conversions.append({
+                    'job_id': job.id,
+                    'recording_id': job.recording_id,
+                    'filename': recording.filename if recording else 'Template Job',
+                    'status': job.status,
+                    'progress': job.progress,
+                    'output_filename': job.output_filename,
+                    'schedule_type': job.schedule_type,
+                    'scheduled_at': job.scheduled_at.isoformat() if job.scheduled_at else None,
+                    'started_at': job.started_at.isoformat() if job.started_at else None,
+                    'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                    'custom_filename': job.custom_filename,
+                    'delete_original': job.delete_original
+                })
+            except Exception as e:
+                logger.error(f"Error processing conversion job {job.id}: {e}")
+                continue
+        
+        logger.info(f"Returning {len(conversions)} conversion jobs")
+        return jsonify({
+            'conversions': conversions,
+            'total': jobs.total,
+            'pages': jobs.pages,
+            'current_page': page,
+            'per_page': per_page
         })
-    
-    return jsonify({
-        'conversions': conversions,
-        'total': jobs.total,
-        'pages': jobs.pages,
-        'current_page': page,
-        'per_page': per_page
-    })
+    except Exception as e:
+        logger.error(f"Error in get_conversion_progress: {e}")
+        return jsonify({'error': f'Failed to get conversion progress: {str(e)}'}), 500
 
 @app.route('/api/conversion-jobs/<int:job_id>', methods=['DELETE'])
 def cancel_conversion_job(job_id):
@@ -734,44 +745,52 @@ def reschedule_conversion_job(job_id):
 @app.route('/api/schedule-template', methods=['POST'])
 def create_schedule_template():
     """API endpoint to create a scheduled template for future conversions"""
-    data = request.get_json()
-    
-    schedule_type = data.get('schedule_type', 'scheduled')
-    scheduled_time = data.get('scheduled_time')
-    custom_filename = data.get('custom_filename', '')
-    
-    # Get global delete setting from conversion settings
-    settings = ConversionSettings.query.first()
-    if not settings:
-        settings = ConversionSettings()
-        db.session.add(settings)
+    try:
+        data = request.get_json()
+        logger.info(f"Received schedule template data: {data}")
+        
+        schedule_type = data.get('schedule_type', 'scheduled')
+        scheduled_time = data.get('scheduled_time')
+        custom_filename = data.get('custom_filename', '')
+        
+        # Get global delete setting from conversion settings
+        settings = ConversionSettings.query.first()
+        if not settings:
+            settings = ConversionSettings()
+            db.session.add(settings)
+            db.session.commit()
+        
+        delete_original = settings.delete_original_after_conversion
+        
+        # Parse scheduled time if provided
+        scheduled_datetime = None
+        if scheduled_time:
+            try:
+                scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+                logger.info(f"Parsed scheduled time: {scheduled_datetime}")
+            except ValueError as e:
+                logger.error(f"Invalid scheduled time format: {scheduled_time}, error: {e}")
+                return jsonify({'error': 'Invalid scheduled time format'}), 400
+        
+        # Create a template job (no specific recording_id)
+        template_job = ConversionJob(
+            recording_id=None,  # No specific recording for template
+            schedule_type=schedule_type,
+            scheduled_at=scheduled_datetime,
+            custom_filename=custom_filename,
+            delete_original=delete_original,
+            status='pending'
+        )
+        
+        db.session.add(template_job)
         db.session.commit()
-    
-    delete_original = settings.delete_original_after_conversion
-    
-    # Parse scheduled time if provided
-    scheduled_datetime = None
-    if scheduled_time:
-        try:
-            scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
-        except ValueError:
-            return jsonify({'error': 'Invalid scheduled time format'}), 400
-    
-    # Create a template job (no specific recording_id)
-    template_job = ConversionJob(
-        recording_id=None,  # No specific recording for template
-        schedule_type=schedule_type,
-        scheduled_at=scheduled_datetime,
-        custom_filename=custom_filename,
-        delete_original=delete_original,
-        status='pending'
-    )
-    
-    db.session.add(template_job)
-    db.session.commit()
-    
-    logger.info(f"Created schedule template: {schedule_type} at {scheduled_datetime}")
-    return jsonify({'message': 'Schedule template created successfully', 'job_id': template_job.id})
+        
+        logger.info(f"Created schedule template: {schedule_type} at {scheduled_datetime}, job_id: {template_job.id}")
+        return jsonify({'message': 'Schedule template created successfully', 'job_id': template_job.id})
+    except Exception as e:
+        logger.error(f"Error creating schedule template: {e}")
+        db.session.rollback()
+        return jsonify({'error': f'Failed to create schedule template: {str(e)}'}), 500
 
 def process_conversions():
     """Background function to process conversions using FFmpeg"""
@@ -780,7 +799,11 @@ def process_conversions():
             # Get jobs that are ready to process (pending and scheduled)
             now = datetime.utcnow()
             ready_jobs = ConversionJob.query.filter(
-                db.and_(ConversionJob.status == 'pending', ConversionJob.scheduled_at <= now)
+                db.and_(
+                    ConversionJob.status == 'pending', 
+                    ConversionJob.scheduled_at.isnot(None),
+                    ConversionJob.scheduled_at <= now
+                )
             ).all()
             
             for job in ready_jobs:
