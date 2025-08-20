@@ -501,6 +501,37 @@ def stop_recording(recording_id):
         logger.error(f"Error stopping recording {recording_id}: {e}")
         return jsonify({'error': 'Failed to stop recording'}), 500
 
+@app.route('/api/test/create-sample-recording', methods=['POST'])
+def create_sample_recording():
+    """Test endpoint to create a sample recording for testing the conversion tab"""
+    try:
+        # Get the first streamer
+        streamer = Streamer.query.first()
+        if not streamer:
+            return jsonify({'error': 'No streamers found'}), 400
+        
+        # Create a sample recording
+        recording = Recording(
+            streamer_id=streamer.id,
+            filename=f"{streamer.twitch_name}_20240820_sample",
+            title="Sample Recording for Testing",
+            game="Test Game",
+            status='completed',
+            started_at=datetime.utcnow() - timedelta(hours=1),
+            ended_at=datetime.utcnow(),
+            duration=3600,  # 1 hour
+            file_size=1024*1024*100  # 100MB
+        )
+        
+        db.session.add(recording)
+        db.session.commit()
+        
+        logger.info(f"Created sample recording: {recording.filename}")
+        return jsonify({'message': 'Sample recording created successfully', 'recording_id': recording.id})
+    except Exception as e:
+        logger.error(f"Error creating sample recording: {e}")
+        return jsonify({'error': 'Failed to create sample recording'}), 500
+
 @app.route('/api/conversion-settings', methods=['GET'])
 def get_conversion_settings():
     """API endpoint to get conversion settings"""
