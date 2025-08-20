@@ -28,7 +28,13 @@ logger = logging.getLogger(__name__)
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///streamlink.db'
+
+# Ensure config directory exists
+config_dir = os.getenv('CONFIG_VOLUME_PATH', './config')
+os.makedirs(config_dir, exist_ok=True)
+
+# Use config directory for database
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{config_dir}/streamlink.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
@@ -227,7 +233,7 @@ def index():
 @app.route('/api/streamers', methods=['GET'])
 def get_streamers():
     """API endpoint to get all streamers"""
-    streamers = Streamer.query.all()
+    streamers = Streamer.query.order_by(Streamer.id).all()
     return jsonify([{
         'id': s.id,
         'username': s.username,

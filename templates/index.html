@@ -874,31 +874,37 @@
                 const tbody = document.getElementById('conversion-recordings-table');
                 tbody.innerHTML = '';
                 
-                data.recordings.forEach(recording => {
-                    const row = document.createElement('tr');
-                    const duration = recording.duration ? formatDuration(recording.duration) : '-';
-                    const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
-                    
-                    row.innerHTML = `
-                        <td>
-                            <input type="checkbox" class="recording-checkbox" value="${recording.id}" onchange="updateConvertButton()">
-                        </td>
-                        <td>${recording.streamer_name || recording.streamer_id}</td>
-                        <td>${recording.title || 'No title'}</td>
-                        <td>
-                            <span class="badge status-${recording.status}">${recording.status}</span>
-                        </td>
-                        <td>${new Date(recording.started_at).toLocaleString()}</td>
-                        <td>${duration}</td>
-                        <td>${fileSize}</td>
-                        <td>
-                            <span class="badge bg-secondary" id="conversion-status-${recording.id}">Not Converted</span>
-                        </td>
-                    `;
-                    tbody.appendChild(row);
-                });
+                if (data.recordings && data.recordings.length > 0) {
+                    data.recordings.forEach(recording => {
+                        const row = document.createElement('tr');
+                        const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                        const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
+                        
+                        row.innerHTML = `
+                            <td>
+                                <input type="checkbox" class="recording-checkbox" value="${recording.id}" onchange="updateConvertButton()">
+                            </td>
+                            <td>${recording.streamer_name || recording.streamer_id}</td>
+                            <td>${recording.title || 'No title'}</td>
+                            <td>
+                                <span class="badge status-${recording.status}">${recording.status}</span>
+                            </td>
+                            <td>${new Date(recording.started_at).toLocaleString()}</td>
+                            <td>${duration}</td>
+                            <td>${fileSize}</td>
+                            <td>
+                                <span class="badge bg-secondary" id="conversion-status-${recording.id}">Not Converted</span>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recordings found</td></tr>';
+                }
             } catch (error) {
                 console.error('Error loading recordings for conversion:', error);
+                const tbody = document.getElementById('conversion-recordings-table');
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Error loading recordings</td></tr>';
             }
         }
 

@@ -42,8 +42,11 @@ class TwitchManager:
                 return StreamStatus.OFFLINE, ""
 
             game_id, title = stream_info.game_id, stream_info.title
-            # Only filter by game if game_list is actually configured
-            if self.config.game_list and self.config.game_list.strip() and game_id not in self.config.game_list.split(","):
+            # Only filter by game if game_list is actually configured and not empty
+            if (self.config.game_list and 
+                self.config.game_list.strip() and 
+                self.config.game_list.strip() != 'game_id1,game_id2,game_id3' and  # Skip placeholder
+                game_id not in self.config.game_list.split(",")):
                 return StreamStatus.UNDESIRED_GAME, title
 
             return StreamStatus.ONLINE, title
