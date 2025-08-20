@@ -825,12 +825,22 @@
 
         // Tab management
         function showTab(tabName) {
+            console.log('=== showTab() called with tabName:', tabName);
+            
             // Hide all tabs
-            document.getElementById('dashboard-tab').style.display = 'none';
-            document.getElementById('conversion-tab').style.display = 'none';
+            const dashboardTab = document.getElementById('dashboard-tab');
+            const conversionTab = document.getElementById('conversion-tab');
+            
+            console.log('Found dashboard tab:', dashboardTab);
+            console.log('Found conversion tab:', conversionTab);
+            
+            dashboardTab.style.display = 'none';
+            conversionTab.style.display = 'none';
             
             // Show selected tab
-            document.getElementById(tabName + '-tab').style.display = 'block';
+            const selectedTab = document.getElementById(tabName + '-tab');
+            console.log('Selected tab element:', selectedTab);
+            selectedTab.style.display = 'block';
             
             // Update navigation
             document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
@@ -838,9 +848,11 @@
             
             // Load tab-specific data
             if (tabName === 'conversion') {
+                console.log('Loading conversion tab data...');
                 loadRecordingsForConversion();
                 loadConversionSettings();
             } else if (tabName === 'dashboard') {
+                console.log('Loading dashboard tab data...');
                 loadStreamers();
                 loadRecentRecordings();
                 loadStatus();
@@ -917,18 +929,30 @@
         // Load recordings for conversion
         async function loadRecordingsForConversion() {
             try {
-                console.log('Loading recordings for conversion...');
-                const response = await fetch('/api/recordings?per_page=50');
-                const data = await response.json();
+                console.log('=== loadRecordingsForConversion() called ===');
+                console.log('Fetching from: /api/recordings?per_page=50');
                 
-                console.log('Recordings data:', data);
+                const response = await fetch('/api/recordings?per_page=50');
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Recordings data received:', data);
+                console.log('Recordings array:', data.recordings);
+                console.log('Recordings length:', data.recordings ? data.recordings.length : 'undefined');
                 
                 const tbody = document.getElementById('conversion-recordings-table');
+                console.log('Found tbody element:', tbody);
                 tbody.innerHTML = '';
                 
                 if (data.recordings && data.recordings.length > 0) {
-                    console.log(`Found ${data.recordings.length} recordings`);
-                    data.recordings.forEach(recording => {
+                    console.log(`Found ${data.recordings.length} recordings, processing...`);
+                    data.recordings.forEach((recording, index) => {
+                        console.log(`Processing recording ${index + 1}:`, recording);
                         const row = document.createElement('tr');
                         const duration = recording.duration ? formatDuration(recording.duration) : '-';
                         const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
@@ -951,14 +975,16 @@
                         `;
                         tbody.appendChild(row);
                     });
+                    console.log('Finished processing recordings');
                 } else {
-                    console.log('No recordings found');
+                    console.log('No recordings found, showing empty message');
                     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recordings found</td></tr>';
                 }
             } catch (error) {
-                console.error('Error loading recordings for conversion:', error);
+                console.error('Error in loadRecordingsForConversion:', error);
+                console.error('Error details:', error.message);
                 const tbody = document.getElementById('conversion-recordings-table');
-                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Error loading recordings</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="8" class="text-center text-danger">Error loading recordings: ${error.message}</td></tr>`;
             }
         }
 
@@ -990,16 +1016,42 @@
         // Load conversion settings
         async function loadConversionSettings() {
             try {
-                console.log('Loading conversion settings...');
+                console.log('=== loadConversionSettings() called ===');
+                console.log('Fetching from: /api/conversion-settings');
+                
                 const response = await fetch('/api/conversion-settings');
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
                 const settings = await response.json();
+                console.log('Conversion settings received:', settings);
                 
-                console.log('Conversion settings:', settings);
+                const volumePathElement = document.getElementById('conversion-volume-path');
+                const namingSchemeElement = document.getElementById('file-naming-scheme');
                 
-                document.getElementById('conversion-volume-path').value = settings.volume_path || '';
-                document.getElementById('file-naming-scheme').value = settings.naming_scheme || 'streamer_date_title';
+                console.log('Found volume path element:', volumePathElement);
+                console.log('Found naming scheme element:', namingSchemeElement);
+                
+                if (volumePathElement) {
+                    volumePathElement.value = settings.volume_path || '';
+                    console.log('Set volume path to:', settings.volume_path || '');
+                } else {
+                    console.error('Volume path element not found!');
+                }
+                
+                if (namingSchemeElement) {
+                    namingSchemeElement.value = settings.naming_scheme || 'streamer_date_title';
+                    console.log('Set naming scheme to:', settings.naming_scheme || 'streamer_date_title');
+                } else {
+                    console.error('Naming scheme element not found!');
+                }
             } catch (error) {
-                console.error('Error loading conversion settings:', error);
+                console.error('Error in loadConversionSettings:', error);
+                console.error('Error details:', error.message);
             }
         }
 

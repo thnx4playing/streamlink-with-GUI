@@ -253,17 +253,31 @@ def index():
 @app.route('/api/streamers', methods=['GET'])
 def get_streamers():
     """API endpoint to get all streamers"""
-    streamers = Streamer.query.order_by(Streamer.id).all()
-    return jsonify([{
-        'id': s.id,
-        'username': s.username,
-        'twitch_name': s.twitch_name,
-        'quality': s.quality,
-        'timer': s.timer,
-        'is_active': s.is_active,
-        'created_at': s.created_at.isoformat(),
-        'updated_at': s.updated_at.isoformat()
-    } for s in streamers])
+    logger.info("GET /api/streamers called")
+    try:
+        streamers = Streamer.query.order_by(Streamer.id).all()
+        logger.info(f"Found {len(streamers)} streamers in database")
+        
+        streamers_data = []
+        for s in streamers:
+            streamer_data = {
+                'id': s.id,
+                'username': s.username,
+                'twitch_name': s.twitch_name,
+                'quality': s.quality,
+                'timer': s.timer,
+                'is_active': s.is_active,
+                'created_at': s.created_at.isoformat(),
+                'updated_at': s.updated_at.isoformat()
+            }
+            streamers_data.append(streamer_data)
+            logger.info(f"Streamer: {s.username} (Twitch: {s.twitch_name}) - Active: {s.is_active}")
+        
+        logger.info(f"Returning {len(streamers_data)} streamers")
+        return jsonify(streamers_data)
+    except Exception as e:
+        logger.error(f"Error in get_streamers: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/streamers', methods=['POST'])
 def add_streamer():
@@ -349,36 +363,47 @@ def delete_streamer(streamer_id):
 @app.route('/api/recordings', methods=['GET'])
 def get_recordings():
     """API endpoint to get recordings"""
-    page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 20, type=int)
-    
-    recordings = Recording.query.order_by(Recording.started_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-    
-    recordings_data = []
-    for r in recordings.items:
-        streamer = Streamer.query.get(r.streamer_id)
-        recordings_data.append({
-            'id': r.id,
-            'streamer_id': r.streamer_id,
-            'streamer_name': streamer.username if streamer else 'Unknown',
-            'filename': r.filename,
-            'title': r.title,
-            'game': r.game,
-            'status': r.status,
-            'started_at': r.started_at.isoformat(),
-            'ended_at': r.ended_at.isoformat() if r.ended_at else None,
-            'file_size': r.file_size,
-            'duration': r.duration
-        })
-    
-    return jsonify({
-        'recordings': recordings_data,
-        'total': recordings.total,
-        'pages': recordings.pages,
-        'current_page': page
-    })
+    logger.info("GET /api/recordings called")
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        
+        logger.info(f"Fetching recordings: page={page}, per_page={per_page}")
+        
+        recordings = Recording.query.order_by(Recording.started_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        logger.info(f"Found {recordings.total} total recordings")
+        
+        recordings_data = []
+        for r in recordings.items:
+            streamer = Streamer.query.get(r.streamer_id)
+            recordings_data.append({
+                'id': r.id,
+                'streamer_id': r.streamer_id,
+                'streamer_name': streamer.username if streamer else 'Unknown',
+                'filename': r.filename,
+                'title': r.title,
+                'game': r.game,
+                'status': r.status,
+                'started_at': r.started_at.isoformat(),
+                'ended_at': r.ended_at.isoformat() if r.ended_at else None,
+                'file_size': r.file_size,
+                'duration': r.duration
+            })
+        
+        response_data = {
+            'recordings': recordings_data,
+            'total': recordings.total,
+            'pages': recordings.pages,
+            'current_page': page
+        }
+        logger.info(f"Returning {len(recordings_data)} recordings")
+        return jsonify(response_data)
+    except Exception as e:
+        logger.error(f"Error in get_recordings: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/status')
 def get_status():
@@ -479,16 +504,26 @@ def stop_recording(recording_id):
 @app.route('/api/conversion-settings', methods=['GET'])
 def get_conversion_settings():
     """API endpoint to get conversion settings"""
-    settings = ConversionSettings.query.first()
-    if not settings:
-        settings = ConversionSettings()
-        db.session.add(settings)
-        db.session.commit()
-    
-    return jsonify({
-        'volume_path': settings.volume_path or '',
-        'naming_scheme': settings.naming_scheme
-    })
+    logger.info("GET /api/conversion-settings called")
+    try:
+        settings = ConversionSettings.query.first()
+        logger.info(f"Found settings: {settings}")
+        if not settings:
+            logger.info("No settings found, creating default")
+            settings = ConversionSettings()
+            db.session.add(settings)
+            db.session.commit()
+            logger.info("Default settings created")
+        
+        response_data = {
+            'volume_path': settings.volume_path or '',
+            'naming_scheme': settings.naming_scheme
+        }
+        logger.info(f"Returning settings: {response_data}")
+        return jsonify(response_data)
+    except Exception as e:
+        logger.error(f"Error in get_conversion_settings: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/conversion-settings', methods=['POST'])
 def save_conversion_settings():
@@ -705,11 +740,27 @@ if __name__ == '__main__':
     max_retries = 3
     retry_delay = 1
     
+    logger.info("=== Starting Streamlink Web GUI ===")
+    logger.info(f"Database URI: {app.config['SQLALCHEMY_DATABASE_URI']}")
+    logger.info(f"Data directory: {data_dir}")
+    logger.info(f"Data directory exists: {os.path.exists(data_dir)}")
+    logger.info(f"Data directory writable: {os.access(data_dir, os.W_OK) if os.path.exists(data_dir) else 'N/A'}")
+    
     for attempt in range(max_retries):
         try:
             with app.app_context():
+                logger.info(f"Attempt {attempt + 1}: Creating database tables...")
                 db.create_all()
                 logger.info("Database created successfully")
+                
+                # Check if database file exists and has content
+                db_path = f"{data_dir}/streamlink.db"
+                if os.path.exists(db_path):
+                    file_size = os.path.getsize(db_path)
+                    logger.info(f"Database file exists: {db_path}, size: {file_size} bytes")
+                else:
+                    logger.warning(f"Database file does not exist: {db_path}")
+                
                 break
         except Exception as e:
             if attempt < max_retries - 1:
