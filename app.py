@@ -411,7 +411,7 @@ def get_status():
     active_streamers = Streamer.query.filter_by(is_active=True).count()
     total_recordings = Recording.query.count()
     recent_recordings = Recording.query.filter(
-        Recording.started_at >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        Recording.started_at >= datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     ).count()
     
     return jsonify({
@@ -745,6 +745,21 @@ if __name__ == '__main__':
     logger.info(f"Data directory: {data_dir}")
     logger.info(f"Data directory exists: {os.path.exists(data_dir)}")
     logger.info(f"Data directory writable: {os.access(data_dir, os.W_OK) if os.path.exists(data_dir) else 'N/A'}")
+    
+    # Debug volume paths
+    logger.info(f"DOWNLOAD_VOLUME_PATH: {os.getenv('DOWNLOAD_VOLUME_PATH', 'Not set')}")
+    logger.info(f"DATA_VOLUME_PATH: {os.getenv('DATA_VOLUME_PATH', 'Not set')}")
+    logger.info(f"CONFIG_VOLUME_PATH: {os.getenv('CONFIG_VOLUME_PATH', 'Not set')}")
+    
+    # List contents of data directory
+    try:
+        if os.path.exists(data_dir):
+            files = os.listdir(data_dir)
+            logger.info(f"Files in data directory: {files}")
+        else:
+            logger.warning("Data directory does not exist!")
+    except Exception as e:
+        logger.error(f"Error listing data directory: {e}")
     
     for attempt in range(max_retries):
         try:
