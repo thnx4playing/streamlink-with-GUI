@@ -553,7 +553,7 @@ def get_conversion_progress():
     return jsonify({'conversions': conversions})
 
 def process_conversions():
-    """Background function to process conversions"""
+    """Background function to process conversions using FFmpeg"""
     with app.app_context():
         while True:
             pending_jobs = ConversionJob.query.filter_by(status='pending').all()
@@ -582,25 +582,101 @@ def process_conversions():
                     # Build output filename based on naming scheme
                     output_filename = build_output_filename(recording, settings.naming_scheme)
                     
-                    # Simulate conversion process (replace with actual FFmpeg call)
-                    job.progress = 'Converting to MP4...'
+                    # Get input and output paths
+                    download_path = get_download_path()
+                    input_file = os.path.join(download_path, f"{recording.filename}.ts")
+                    output_file = os.path.join(download_path, output_filename)
+                    
+                    # Check if input file exists
+                    if not os.path.exists(input_file):
+                        job.status = 'failed'
+                        job.progress = f'Input file not found: {input_file}'
+                        db.session.commit()
+                        continue
+                    
+                    # Check if output file already exists
+                    if os.path.exists(output_file):
+                        job.status = 'failed'
+                        job.progress = f'Output file already exists: {output_filename}'
+                        db.session.commit()
+                        continue
+                    
+                    # Update progress
+                    job.progress = 'Converting TS to MP4 using FFmpeg...'
                     db.session.commit()
                     
-                    # For now, just simulate the conversion
-                    time.sleep(5)  # Simulate processing time
+                    # Run FFmpeg conversion
+                    success = convert_ts_to_mp4(input_file, output_file, job)
                     
-                    job.status = 'completed'
-                    job.progress = 'Conversion completed'
-                    job.output_filename = output_filename
-                    job.completed_at = datetime.utcnow()
-                    db.session.commit()
+                    if success:
+                        job.status = 'completed'
+                        job.progress = 'Conversion completed successfully'
+                        job.output_filename = output_filename
+                        job.completed_at = datetime.utcnow()
+                        db.session.commit()
+                        logger.info(f"Successfully converted {input_file} to {output_file}")
+                    else:
+                        job.status = 'failed'
+                        job.progress = 'FFmpeg conversion failed'
+                        db.session.commit()
                     
                 except Exception as e:
                     job.status = 'failed'
                     job.progress = f'Error: {str(e)}'
                     db.session.commit()
+                    logger.error(f"Error in conversion job {job.id}: {e}")
             
             time.sleep(10)  # Check for new jobs every 10 seconds
+
+def convert_ts_to_mp4(input_file, output_file, job):
+    """Convert TS file to MP4 using FFmpeg"""
+    try:
+        import subprocess
+        
+        # FFmpeg command for TS to MP4 conversion
+        # -i: input file
+        # -c:v copy: copy video stream without re-encoding (fast)
+        # -c:a aac: convert audio to AAC format
+        # -y: overwrite output file if it exists
+        cmd = [
+            'ffmpeg',
+            '-i', input_file,
+            '-c:v', 'copy',  # Copy video stream (no re-encoding)
+            '-c:a', 'aac',   # Convert audio to AAC
+            '-y',            # Overwrite output
+            output_file
+        ]
+        
+        # Update progress
+        job.progress = 'Running FFmpeg conversion...'
+        db.session.commit()
+        
+        # Run FFmpeg command
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=3600  # 1 hour timeout
+        )
+        
+        if result.returncode == 0:
+            # Check if output file was created and has size > 0
+            if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                return True
+            else:
+                logger.error(f"FFmpeg completed but output file is missing or empty: {output_file}")
+                return False
+        else:
+            logger.error(f"FFmpeg failed with return code {result.returncode}")
+            logger.error(f"FFmpeg stderr: {result.stderr}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        logger.error(f"FFmpeg conversion timed out for {input_file}")
+        return False
+    except Exception as e:
+        logger.error(f"Error running FFmpeg: {e}")
+        return False
 
 def build_output_filename(recording, naming_scheme):
     """Build output filename based on naming scheme"""
@@ -671,6 +747,14 @@ if __name__ == '__main__':
                 recording_threads[streamer.id] = thread
     except Exception as e:
         logger.error(f"Error starting recording threads: {e}")
+    
+    # Start conversion processing thread
+    try:
+        conversion_thread = threading.Thread(target=process_conversions, daemon=True)
+        conversion_thread.start()
+        logger.info("Conversion processing thread started")
+    except Exception as e:
+        logger.error(f"Error starting conversion thread: {e}")
     
     # Get port from environment or use non-standard port
     port = int(os.getenv('PORT', 8080))

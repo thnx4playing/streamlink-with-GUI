@@ -2,8 +2,8 @@
 FROM python:3.13.7-alpine3.21 as base
 WORKDIR /app
 
-# Install system dependencies
-RUN apk add --no-cache gcc musl-dev
+# Install system dependencies including FFmpeg
+RUN apk add --no-cache gcc musl-dev ffmpeg
 
 # Copy requirements and install Python packages
 COPY requirements.txt .
