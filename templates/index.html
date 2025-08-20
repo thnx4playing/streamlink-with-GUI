@@ -1190,25 +1190,28 @@
                         }
                         
                         const scheduledDate = job.scheduled_at ? new Date(job.scheduled_at).toLocaleString() : 'No date';
-                        const startedDate = job.started_at ? new Date(job.started_at).toLocaleString() : '';
-                        const completedDate = job.completed_at ? new Date(job.completed_at).toLocaleString() : '';
+                        const lastRunDate = job.completed_at ? new Date(job.completed_at).toLocaleString() : 
+                                           (job.started_at ? new Date(job.started_at).toLocaleString() : 'Never');
+                        const lastRunStatus = job.status === 'completed' ? 'Completed' : 
+                                             (job.status === 'failed' ? 'Failed' : 
+                                             (job.status === 'converting' ? 'Running' : 'Pending'));
                         
                         div.innerHTML = `
                             <div class="flex-grow-1">
                                 <div class="fw-bold small">${job.filename || 'Template Task'}</div>
                                 <div class="text-muted small">
                                     ${job.scheduled_at ? `Scheduled: ${scheduledDate}` : 'No schedule'}
-                                    ${job.started_at ? `<br>Started: ${startedDate}` : ''}
-                                    ${job.completed_at ? `<br>Completed: ${completedDate}` : ''}
+                                    <br>Last Run: ${lastRunDate} (${lastRunStatus})
                                 </div>
                                 <div class="text-info small">${job.schedule_type || 'Manual'}</div>
                                 ${job.progress ? `<div class="text-muted small">${job.progress}</div>` : ''}
                             </div>
                             <div class="d-flex flex-column align-items-end">
                                 <span class="badge ${statusClass} mb-1">${statusText}</span>
-                                <button class="btn btn-sm btn-outline-danger" onclick="cancelConversionJob(${job.job_id})" 
-                                        ${job.status === 'completed' || job.status === 'failed' ? 'disabled' : ''}>
-                                    <i class="fas fa-times"></i>
+                                <button class="btn btn-sm btn-link text-danger p-0" onclick="cancelConversionJob(${job.job_id})" 
+                                        ${job.status === 'completed' || job.status === 'failed' ? 'disabled' : ''}
+                                        title="Delete task">
+                                    <i class="fas fa-trash-alt"></i>
                                 </button>
                             </div>
                         `;
