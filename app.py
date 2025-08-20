@@ -581,16 +581,40 @@ def build_output_filename(recording, naming_scheme):
         return f"{streamer_name} - {date_str} - {safe_title}.mp4"
 
 if __name__ == '__main__':
-    # Create database tables
-    with app.app_context():
-        db.create_all()
-        
-        # Start recording threads for existing active streamers
-        active_streamers = Streamer.query.filter_by(is_active=True).all()
-        for streamer in active_streamers:
-            thread = threading.Thread(target=record_stream, args=(streamer.id,), daemon=True)
-            thread.start()
-            recording_threads[streamer.id] = thread
+    # Create database tables with retry logic
+    max_retries = 5
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            with app.app_context():
+                db.create_all()
+                break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                logger.warning(f"Database creation failed (attempt {attempt + 1}/{max_retries}): {e}")
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error(f"Failed to create database after {max_retries} attempts: {e}")
+                # Use a fallback database location
+                fallback_db_path = '/tmp/streamlink.db'
+                app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{fallback_db_path}'
+                with app.app_context():
+                    db.create_all()
+                logger.info(f"Created database in fallback location: {fallback_db_path}")
+    
+    # Start recording threads for existing active streamers
+    try:
+        with app.app_context():
+            active_streamers = Streamer.query.filter_by(is_active=True).all()
+            for streamer in active_streamers:
+                thread = threading.Thread(target=record_stream, args=(streamer.id,), daemon=True)
+                thread.start()
+                recording_threads[streamer.id] = thread
+    except Exception as e:
+        logger.error(f"Error starting recording threads: {e}")
     
     # Get port from environment or use non-standard port
     port = int(os.getenv('PORT', 8080))

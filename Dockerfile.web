@@ -17,6 +17,7 @@ COPY twitch_manager.py .
 COPY streamlink_manager.py .
 COPY notification_manager.py .
 COPY templates/ ./templates/
+COPY startup.sh .
 
 # Create required directories
 RUN mkdir -p /app/download /app/data /app/config
@@ -40,5 +41,8 @@ ENV DOWNLOAD_PATH=/app/download
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/status || exit 1
 
+# Make startup script executable
+RUN chmod +x /app/startup.sh
+
 # Run the web application
-CMD ["python", "app.py"]
+CMD ["/app/startup.sh"]
