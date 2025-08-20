@@ -437,16 +437,7 @@
                                 <small class="form-text text-muted">Directory for converted MP4 files</small>
                             </div>
                             <div class="mb-3">
-                                <label for="file-naming-scheme" class="form-label fw-bold">File Naming Scheme</label>
-                                <select class="form-select" id="file-naming-scheme">
-                                    <option value="streamer_date_title">Streamer - Date - Title</option>
-                                    <option value="date_streamer_title">Date - Streamer - Title</option>
-                                    <option value="title_date_streamer">Title - Date - Streamer</option>
-                                    <option value="streamer_title_date">Streamer - Title - Date</option>
-                                </select>
-                            </div>
-                            <div class="mb-3">
-                                <label for="custom-filename-template" class="form-label fw-bold">Custom Filename Template</label>
+                                <label for="custom-filename-template" class="form-label fw-bold">File Naming Scheme</label>
                                 <input type="text" class="form-control" id="custom-filename-template" placeholder="{streamer}_{date}_{title}">
                                 <small class="form-text text-muted">Use variables: {streamer}, {twitch_name}, {title}, {date}, {time}, {datetime}, {game}</small>
                             </div>
@@ -469,7 +460,7 @@
             <!-- Conversion Options - Right Half -->
             <div class="col-lg-6">
                 <div class="card h-100">
-                    <div class="card-header bg-success text-white">
+                    <div class="card-header bg-primary text-white">
                         <h5 class="mb-0">
                             <i class="fas fa-clock me-2"></i>Conversion Options
                         </h5>
@@ -500,6 +491,10 @@
                             </div>
                         </div>
                         
+                        <button type="button" class="btn btn-primary" onclick="saveConversionOptions()">
+                            <i class="fas fa-save me-1"></i>Save Options
+                        </button>
+                        
                         <!-- Scheduled Tasks Display -->
                         <div class="mt-4">
                             <h6 class="fw-bold text-muted">Scheduled Tasks</h6>
@@ -515,7 +510,7 @@
             <div class="row mt-4">
                 <div class="col-12">
                     <div class="card">
-                        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">
                                 <i class="fas fa-film me-2"></i>Recordings for Conversion
                             </h5>
@@ -559,7 +554,7 @@
             <div class="row mt-4">
                 <div class="col-12">
                     <div class="card">
-                        <div class="card-header bg-info text-white d-flex justify-content-between align-items-center">
+                        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
                             <h5 class="mb-0">
                                 <i class="fas fa-tasks me-2"></i>Conversion Progress
                             </h5>
@@ -958,6 +953,7 @@
                 console.log('Loading conversion tab data...');
                 loadRecordingsForConversion();
                 loadConversionSettings();
+                loadConversionOptions();
                 refreshConversionProgress();
                 loadScheduledTasks();
             } else if (tabName === 'dashboard') {
@@ -1259,7 +1255,6 @@
                 
                 // Update form elements
                 const elements = {
-                    'file-naming-scheme': settings.naming_scheme || 'streamer_date_title',
                     'custom-filename-template': settings.custom_filename_template || '',
                     'delete-original-after-conversion': settings.delete_original_after_conversion || false
                 };
@@ -1286,7 +1281,6 @@
         // Save conversion settings
         async function saveConversionSettings() {
             const settings = {
-                naming_scheme: document.getElementById('file-naming-scheme').value,
                 custom_filename_template: document.getElementById('custom-filename-template').value,
                 delete_original_after_conversion: document.getElementById('delete-original-after-conversion').checked
             };
@@ -1311,7 +1305,43 @@
             }
         }
 
-                // Convert selected recordings
+        // Save conversion options
+        async function saveConversionOptions() {
+            const options = {
+                schedule_type: document.getElementById('schedule-type').value,
+                scheduled_time: document.getElementById('scheduled-time').value,
+                custom_filename: document.getElementById('conversion-custom-filename').value,
+                delete_original: document.getElementById('conversion-delete-original').checked
+            };
+            
+            try {
+                // Store options in localStorage for persistence
+                localStorage.setItem('conversionOptions', JSON.stringify(options));
+                alert('Conversion options saved successfully!');
+            } catch (error) {
+                console.error('Error saving conversion options:', error);
+                alert('Error saving conversion options');
+            }
+        }
+
+        // Load conversion options
+        function loadConversionOptions() {
+            try {
+                const savedOptions = localStorage.getItem('conversionOptions');
+                if (savedOptions) {
+                    const options = JSON.parse(savedOptions);
+                    
+                    document.getElementById('schedule-type').value = options.schedule_type || 'scheduled';
+                    document.getElementById('scheduled-time').value = options.scheduled_time || '';
+                    document.getElementById('conversion-custom-filename').value = options.custom_filename || '';
+                    document.getElementById('conversion-delete-original').checked = options.delete_original || false;
+                }
+            } catch (error) {
+                console.error('Error loading conversion options:', error);
+            }
+        }
+
+        // Convert selected recordings
         async function convertSelectedRecordings() {
             const checkboxes = document.querySelectorAll('.recording-checkbox:checked');
             const recordingIds = Array.from(checkboxes).map(cb => cb.value);

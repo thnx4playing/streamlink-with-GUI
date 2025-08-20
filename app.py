@@ -130,7 +130,8 @@ def get_download_path():
 
 def get_converted_path():
     """Get the converted files path from environment or use default"""
-    return os.getenv('CONVERTED_VOLUME_PATH', './converted')
+    # Always use the internal container path for converted files
+    return '/app/converted'
 
 def ensure_download_directory():
     """Ensure the download directory exists"""
@@ -587,7 +588,6 @@ def save_conversion_settings():
         db.session.add(settings)
     
     # Don't save volume paths as they're now environment variables
-    settings.naming_scheme = data.get('naming_scheme', 'streamer_date_title')
     settings.custom_filename_template = data.get('custom_filename_template', '')
     settings.delete_original_after_conversion = data.get('delete_original_after_conversion', False)
     settings.updated_at = datetime.utcnow()
@@ -735,8 +735,11 @@ def process_conversions():
                     # Build output filename (use custom filename if provided)
                     if job.custom_filename:
                         output_filename = build_custom_filename(job.custom_filename, recording)
+                    elif settings.custom_filename_template:
+                        output_filename = build_custom_filename(settings.custom_filename_template, recording)
                     else:
-                        output_filename = build_output_filename(recording, settings.naming_scheme)
+                        # Fallback to default naming scheme
+                        output_filename = build_output_filename(recording, 'streamer_date_title')
                     
                     # Get input and output paths
                     download_path = get_download_path()
