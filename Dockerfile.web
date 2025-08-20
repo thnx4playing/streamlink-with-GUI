@@ -18,8 +18,8 @@ COPY streamlink_manager.py .
 COPY notification_manager.py .
 COPY templates/ ./templates/
 
-# Create download directory
-RUN mkdir -p /app/download
+# Create required directories
+RUN mkdir -p /app/download /app/data /app/config
 
 # Create non-root user
 RUN addgroup -g 1000 streamlink && \

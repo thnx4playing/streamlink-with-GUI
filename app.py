@@ -31,7 +31,19 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this'
 
 # Ensure config directory exists (use relative path inside container)
 config_dir = os.getenv('CONFIG_VOLUME_PATH', '/app/config')
-os.makedirs(config_dir, exist_ok=True)
+
+# Try to create config directory, but don't fail if it already exists
+try:
+    os.makedirs(config_dir, exist_ok=True)
+except PermissionError:
+    # If we can't create the directory, try using a fallback path
+    config_dir = '/app/config'
+    try:
+        os.makedirs(config_dir, exist_ok=True)
+    except PermissionError:
+        # Last resort: use current directory
+        config_dir = '.'
+        os.makedirs(config_dir, exist_ok=True)
 
 # Use config directory for database
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{config_dir}/streamlink.db'
