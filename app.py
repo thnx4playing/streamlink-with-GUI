@@ -128,11 +128,21 @@ def get_download_path():
     """Get the download path from environment or use default"""
     return os.getenv('DOWNLOAD_PATH', './download')
 
+def get_converted_path():
+    """Get the converted files path from environment or use default"""
+    return os.getenv('CONVERTED_VOLUME_PATH', './converted')
+
 def ensure_download_directory():
     """Ensure the download directory exists"""
     download_path = get_download_path()
     os.makedirs(download_path, exist_ok=True)
     return download_path
+
+def ensure_converted_directory():
+    """Ensure the converted directory exists"""
+    converted_path = get_converted_path()
+    os.makedirs(converted_path, exist_ok=True)
+    return converted_path
 
 def record_stream(streamer_id):
     """Background function to record a stream"""
@@ -554,8 +564,8 @@ def get_conversion_settings():
             logger.info("Default settings created")
         
         response_data = {
-            'volume_path': settings.volume_path or '',
-            'output_volume_path': settings.output_volume_path or '',
+            'volume_path': get_download_path(),
+            'output_volume_path': get_converted_path(),
             'naming_scheme': settings.naming_scheme,
             'custom_filename_template': settings.custom_filename_template or '',
             'delete_original_after_conversion': settings.delete_original_after_conversion
@@ -576,8 +586,7 @@ def save_conversion_settings():
         settings = ConversionSettings()
         db.session.add(settings)
     
-    settings.volume_path = data.get('volume_path', '')
-    settings.output_volume_path = data.get('output_volume_path', '')
+    # Don't save volume paths as they're now environment variables
     settings.naming_scheme = data.get('naming_scheme', 'streamer_date_title')
     settings.custom_filename_template = data.get('custom_filename_template', '')
     settings.delete_original_after_conversion = data.get('delete_original_after_conversion', False)
@@ -592,14 +601,14 @@ def convert_recordings():
     """API endpoint to start conversion of recordings"""
     data = request.get_json()
     recording_ids = data.get('recording_ids', [])
-    schedule_type = data.get('schedule_type', 'immediate')  # immediate, daily, weekly, custom
+    schedule_type = data.get('schedule_type', 'scheduled')  # scheduled, daily, weekly, custom
     scheduled_time = data.get('scheduled_time')  # ISO format string
     custom_filename = data.get('custom_filename', '')  # Custom filename template
     delete_original = data.get('delete_original', False)  # Delete original after conversion
     
     # Parse scheduled time if provided
     scheduled_datetime = None
-    if scheduled_time and schedule_type != 'immediate':
+    if scheduled_time:
         try:
             scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
         except ValueError:
@@ -620,13 +629,10 @@ def convert_recordings():
     
     db.session.commit()
     
-    # Start conversion process in background (for immediate conversions)
-    if schedule_type == 'immediate':
-        thread = threading.Thread(target=process_conversions, daemon=True)
-        thread.start()
-        return jsonify({'message': 'Conversion started immediately'})
-    else:
-        return jsonify({'message': f'Conversion scheduled for {scheduled_datetime}' if scheduled_datetime else 'Conversion scheduled'})
+    # Start conversion process in background
+    thread = threading.Thread(target=process_conversions, daemon=True)
+    thread.start()
+    return jsonify({'message': f'Conversion scheduled for {scheduled_datetime}' if scheduled_datetime else 'Conversion scheduled'})
 
 @app.route('/health')
 def health_check():
@@ -701,10 +707,7 @@ def process_conversions():
             # Get jobs that are ready to process (pending and scheduled)
             now = datetime.utcnow()
             ready_jobs = ConversionJob.query.filter(
-                db.or_(
-                    db.and_(ConversionJob.status == 'pending', ConversionJob.schedule_type == 'immediate'),
-                    db.and_(ConversionJob.status == 'pending', ConversionJob.scheduled_at <= now)
-                )
+                db.and_(ConversionJob.status == 'pending', ConversionJob.scheduled_at <= now)
             ).all()
             
             for job in ready_jobs:
@@ -739,10 +742,10 @@ def process_conversions():
                     download_path = get_download_path()
                     input_file = os.path.join(download_path, f"{recording.filename}.ts")
                     
-                    # Use custom output path if specified
-                    output_path = settings.output_volume_path if settings.output_volume_path else download_path
-                    os.makedirs(output_path, exist_ok=True)
-                    output_file = os.path.join(output_path, output_filename)
+                                         # Use converted directory for output
+                     converted_path = get_converted_path()
+                     os.makedirs(converted_path, exist_ok=True)
+                     output_file = os.path.join(converted_path, output_filename)
                     
                     # Check if input file exists
                     if not os.path.exists(input_file):

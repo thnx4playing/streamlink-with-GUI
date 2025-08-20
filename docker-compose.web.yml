@@ -11,6 +11,7 @@ services:
       - "2344:8080"  # Non-standard port to avoid conflicts
     volumes:
       - ${DOWNLOAD_VOLUME_PATH:-./download}:/app/download
+      - ${CONVERTED_VOLUME_PATH:-./converted}:/app/converted  # For converted MP4 files
       - ${DATA_VOLUME_PATH:-./data}:/app/data  # For database persistence
       - ${CONFIG_VOLUME_PATH:-./config}:/app/config  # For persistent configurations
     environment:
