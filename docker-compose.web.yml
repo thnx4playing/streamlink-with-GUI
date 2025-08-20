@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  streamlink-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: streamlink-web-gui
+    restart: unless-stopped
+    ports:
+      - "2344:8080"  # Non-standard port to avoid conflicts
+    volumes:
+      - ${DOWNLOAD_VOLUME_PATH:-./download}:/app/download
+      - ./data:/app/data  # For database persistence
+    environment:
+      # Web GUI Configuration
+      - PORT=8080
+      - SECRET_KEY=your-secret-key-change-this-in-production
+      - DOWNLOAD_PATH=/app/download
+      
+      # Twitch API Configuration
+      - TWITCH_CLIENT_ID=${TWITCH_CLIENT_ID}
+      - TWITCH_CLIENT_SECRET=${TWITCH_CLIENT_SECRET}
+      - TWITCH_OAUTH_TOKEN=${TWITCH_OAUTH_TOKEN}
+      
+      # Notification Configuration (optional)
+      - SLACK_ID=${SLACK_ID}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+      
+      # Additional Configuration
+      - GAME_LIST=${GAME_LIST}
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: FFmpeg service for converting TS files to MP4
+  ffmpeg:
+    image: ghcr.io/liofal/ffmpeg6:1.0.0
+    container_name: streamlink-ffmpeg
+    restart: unless-stopped
+    volumes:
+      - ./download:/app/download
+    environment:
+      - SLEEPTIME=600  # Check every 10 minutes
+      - WORKDIR=/app/download
+    depends_on:
+      - streamlink-web

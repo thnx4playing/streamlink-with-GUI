@@ -1,0 +1,44 @@
+# Base image with Python
+FROM python:3.13.7-alpine3.21 as base
+WORKDIR /app
+
+# Install system dependencies
+RUN apk add --no-cache gcc musl-dev
+
+# Copy requirements and install Python packages
+COPY requirements.txt .
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+# Copy application files
+COPY app.py .
+COPY streamlink-recorder.py .
+COPY twitch_manager.py .
+COPY streamlink_manager.py .
+COPY notification_manager.py .
+COPY templates/ ./templates/
+
+# Create download directory
+RUN mkdir -p /app/download
+
+# Create non-root user
+RUN addgroup -g 1000 streamlink && \
+    adduser -D -s /bin/sh -u 1000 -G streamlink streamlink && \
+    chown -R streamlink:streamlink /app
+
+# Switch to non-root user
+USER streamlink
+
+# Expose the web port
+EXPOSE 8080
+
+# Set environment variables
+ENV PORT=8080
+ENV DOWNLOAD_PATH=/app/download
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/api/status || exit 1
+
+# Run the web application
+CMD ["python", "app.py"]
