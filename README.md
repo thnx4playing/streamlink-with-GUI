@@ -1,3 +1,131 @@
+# Streamlink with Web GUI
+
+A modern web interface for managing Twitch stream recordings with Streamlink. This fork adds a comprehensive web GUI to the original streamlink project, allowing you to manage multiple streamers, view recording history, and configure all settings through a beautiful web interface.
+
+## 🚀 New Features
+
+- **Web GUI**: Modern, responsive web interface accessible on port 8080
+- **Multi-Streamer Management**: Add, edit, and delete streamers through the web interface
+- **Real-time Status**: See live status of all streamers and their current streams
+- **Recording History**: View complete history of all recordings with details
+- **Configuration Management**: Configure all streamlink options through the web interface
+- **Database Persistence**: SQLite database to store streamers and recording history
+- **RESTful API**: Full API for programmatic access to all features
+
+## 🎯 Quick Start
+
+### Using Docker Compose (Recommended)
+
+1. **Clone the repository:**
+   ```bash
+   git clone https://github.com/your-username/streamlink-with-GUI.git
+   cd streamlink-with-GUI
+   ```
+
+2. **Copy and configure environment variables:**
+   ```bash
+   cp env.example .env
+   # Edit .env with your Twitch API credentials
+   ```
+
+3. **Start the web GUI:**
+   ```bash
+   docker-compose -f docker-compose.web.yml up -d
+   ```
+
+4. **Access the web interface:**
+   Open your browser and go to `http://localhost:8080`
+
+### Using Docker Run
+
+```bash
+docker run -d \
+  --name=streamlink-web-gui \
+  -p 8080:8080 \
+  -v /path/to/downloads:/app/download \
+  -v /path/to/data:/app/data \
+  -e TWITCH_CLIENT_ID=your_client_id \
+  -e TWITCH_CLIENT_SECRET=your_client_secret \
+  -e TWITCH_OAUTH_TOKEN=your_oauth_token \
+  your-username/streamlink-with-gui:latest
+```
+
+## 📋 Configuration
+
+### Environment Variables
+
+| Variable | Description | Required | Default |
+|----------|-------------|----------|---------|
+| `TWITCH_CLIENT_ID` | Your Twitch app client ID | Yes | - |
+| `TWITCH_CLIENT_SECRET` | Your Twitch app client secret | Yes | - |
+| `TWITCH_OAUTH_TOKEN` | Your Twitch OAuth token | Yes | - |
+| `PORT` | Web GUI port | No | 8080 |
+| `SECRET_KEY` | Flask secret key | No | auto-generated |
+| `DOWNLOAD_PATH` | Path for downloaded files | No | /app/download |
+| `SLACK_ID` | Slack webhook URL | No | - |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token | No | - |
+| `TELEGRAM_CHAT_ID` | Telegram chat ID | No | - |
+| `GAME_LIST` | Comma-separated game IDs | No | - |
+
+### Web GUI Features
+
+- **Dashboard**: Overview of active streamers, total recordings, and system status
+- **Streamer Management**: Add, edit, delete, and toggle streamers
+- **Quality Settings**: Configure recording quality (best, worst, 1080p60, 720p, etc.)
+- **Timer Configuration**: Set check intervals for each streamer
+- **Recording History**: View all recordings with status, duration, and file size
+- **Real-time Status**: Live updates of streamer status and current streams
+
+## 🔧 API Endpoints
+
+The web GUI provides a RESTful API for programmatic access:
+
+- `GET /api/streamers` - List all streamers
+- `POST /api/streamers` - Add a new streamer
+- `PUT /api/streamers/{id}` - Update a streamer
+- `DELETE /api/streamers/{id}` - Delete a streamer
+- `GET /api/recordings` - List recordings with pagination
+- `GET /api/status` - Get system status
+- `GET /api/streamers/{id}/check` - Check specific streamer status
+
+## 📁 File Structure
+
+```
+streamlink-with-GUI/
+├── app.py                 # Main Flask web application
+├── streamlink-recorder.py # Original streamlink recorder
+├── streamlink_manager.py  # Streamlink management
+├── twitch_manager.py      # Twitch API integration
+├── notification_manager.py # Notification system
+├── templates/
+│   └── index.html        # Web GUI template
+├── Dockerfile.web        # Dockerfile for web GUI
+├── docker-compose.web.yml # Docker Compose for web GUI
+├── env.example           # Environment variables template
+└── requirements.txt      # Python dependencies
+```
+
+## 🔄 Migration from Original
+
+If you're currently using the original streamlink project, you can easily migrate:
+
+1. **Backup your current configuration**
+2. **Update your docker-compose file** to use `docker-compose.web.yml`
+3. **Set up environment variables** in `.env` file
+4. **Start the web GUI** and add your streamers through the interface
+
+The web GUI maintains full compatibility with the original functionality while adding the new web interface.
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE.MD](LICENSE.MD) file for details.
+
+---
+
 # ⚠️ Disclaimer ⚠️
 We have renamed the master branch to main for clarity and to follow best practices. Please reconfigure your branch origin with the following commands:
 

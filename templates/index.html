@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streamlink Web GUI</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .status-online { color: #28a745; }
+        .status-offline { color: #6c757d; }
+        .status-error { color: #dc3545; }
+        .status-recording { color: #ffc107; }
+        .status-completed { color: #28a745; }
+        .status-failed { color: #dc3545; }
+        
+        .card {
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            border: 1px solid rgba(0, 0, 0, 0.125);
+        }
+        
+        .btn-group-sm > .btn, .btn-sm {
+            padding: 0.25rem 0.5rem;
+            font-size: 0.875rem;
+        }
+        
+        .table th {
+            border-top: none;
+            font-weight: 600;
+        }
+        
+        .modal-header {
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+        }
+        
+        .form-control:focus {
+            border-color: #80bdff;
+            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        }
+        
+        .navbar-brand {
+            font-weight: 600;
+        }
+        
+        .stats-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .refresh-btn {
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .refresh-btn:hover {
+            transform: rotate(180deg);
+        }
+    </style>
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-video me-2"></i>Streamlink Web GUI
+            </a>
+            <div class="navbar-nav ms-auto">
+                <span class="navbar-text">
+                    <i class="fas fa-circle text-success me-1"></i>System Online
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Stats Cards -->
+        <div class="row mb-4">
+            <div class="col-md-3">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Active Streamers</h6>
+                                <h3 id="active-streamers">0</h3>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="fas fa-users fa-2x"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Total Recordings</h6>
+                                <h3 id="total-recordings">0</h3>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="fas fa-film fa-2x"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Today's Recordings</h6>
+                                <h3 id="recent-recordings">0</h3>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="fas fa-calendar-day fa-2x"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="card stats-card">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between">
+                            <div>
+                                <h6 class="card-title">Download Path</h6>
+                                <small id="download-path">./download</small>
+                            </div>
+                            <div class="align-self-center">
+                                <i class="fas fa-folder fa-2x"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="row">
+            <!-- Streamers Management -->
+            <div class="col-lg-8">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="fas fa-users me-2"></i>Streamers Management
+                        </h5>
+                        <div>
+                            <button class="btn btn-sm btn-outline-secondary me-2" onclick="refreshStatus()">
+                                <i class="fas fa-sync-alt refresh-btn"></i> Refresh Status
+                            </button>
+                            <button class="btn btn-sm btn-primary" onclick="showAddStreamerModal()">
+                                <i class="fas fa-plus me-1"></i>Add Streamer
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Username</th>
+                                        <th>Twitch Name</th>
+                                        <th>Status</th>
+                                        <th>Quality</th>
+                                        <th>Timer (s)</th>
+                                        <th>Active</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="streamers-table">
+                                    <!-- Streamers will be loaded here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Recordings -->
+            <div class="col-lg-4">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="fas fa-history me-2"></i>Recent Recordings
+                        </h5>
+                        <button class="btn btn-sm btn-outline-primary" onclick="showRecordingsModal()">
+                            View All
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div id="recent-recordings-list">
+                            <!-- Recent recordings will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Streamer Modal -->
+    <div class="modal fade" id="addStreamerModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add New Streamer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addStreamerForm">
+                        <div class="mb-3">
+                            <label for="username" class="form-label">Username</label>
+                            <input type="text" class="form-control" id="username" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="twitchName" class="form-label">Twitch Name</label>
+                            <input type="text" class="form-control" id="twitchName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="quality" class="form-label">Quality</label>
+                            <select class="form-select" id="quality">
+                                <option value="best">Best</option>
+                                <option value="worst">Worst</option>
+                                <option value="1080p60">1080p60</option>
+                                <option value="1080p">1080p</option>
+                                <option value="720p60">720p60</option>
+                                <option value="720p">720p</option>
+                                <option value="480p">480p</option>
+                                <option value="360p">360p</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="timer" class="form-label">Check Interval (seconds)</label>
+                            <input type="number" class="form-control" id="timer" value="360" min="15">
+                            <div class="form-text">Minimum 15 seconds recommended</div>
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="isActive" checked>
+                                <label class="form-check-label" for="isActive">
+                                    Active (start recording immediately)
+                                </label>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="addStreamer()">Add Streamer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Streamer Modal -->
+    <div class="modal fade" id="editStreamerModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit Streamer</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editStreamerForm">
+                        <input type="hidden" id="editStreamerId">
+                        <div class="mb-3">
+                            <label for="editUsername" class="form-label">Username</label>
+                            <input type="text" class="form-control" id="editUsername" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editTwitchName" class="form-label">Twitch Name</label>
+                            <input type="text" class="form-control" id="editTwitchName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editQuality" class="form-label">Quality</label>
+                            <select class="form-select" id="editQuality">
+                                <option value="best">Best</option>
+                                <option value="worst">Worst</option>
+                                <option value="1080p60">1080p60</option>
+                                <option value="1080p">1080p</option>
+                                <option value="720p60">720p60</option>
+                                <option value="720p">720p</option>
+                                <option value="480p">480p</option>
+                                <option value="360p">360p</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editTimer" class="form-label">Check Interval (seconds)</label>
+                            <input type="number" class="form-control" id="editTimer" min="15">
+                        </div>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="editIsActive">
+                                <label class="form-check-label" for="editIsActive">
+                                    Active
+                                </label>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" onclick="updateStreamer()">Update Streamer</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recordings Modal -->
+    <div class="modal fade" id="recordingsModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">All Recordings</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="table-responsive">
+                        <table class="table table-hover">
+                            <thead>
+                                <tr>
+                                    <th>Streamer</th>
+                                    <th>Title</th>
+                                    <th>Status</th>
+                                    <th>Started</th>
+                                    <th>Duration</th>
+                                    <th>File Size</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recordings-table">
+                                <!-- Recordings will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                    <nav>
+                        <ul class="pagination justify-content-center" id="recordings-pagination">
+                            <!-- Pagination will be generated here -->
+                        </ul>
+                    </nav>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Global variables
+        let currentPage = 1;
+        const perPage = 20;
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStreamers();
+            loadRecentRecordings();
+            loadStatus();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(function() {
+                loadStreamers();
+                loadRecentRecordings();
+                loadStatus();
+            }, 30000);
+        });
+
+        // Load streamers
+        async function loadStreamers() {
+            try {
+                const response = await fetch('/api/streamers');
+                const streamers = await response.json();
+                
+                const tbody = document.getElementById('streamers-table');
+                tbody.innerHTML = '';
+                
+                streamers.forEach(streamer => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${streamer.username}</td>
+                        <td>${streamer.twitch_name}</td>
+                        <td>
+                            <span class="status-${streamer.status?.toLowerCase() || 'offline'}">
+                                <i class="fas fa-circle me-1"></i>${streamer.status || 'OFFLINE'}
+                            </span>
+                        </td>
+                        <td>${streamer.quality}</td>
+                        <td>${streamer.timer}</td>
+                        <td>
+                            <span class="badge ${streamer.is_active ? 'bg-success' : 'bg-secondary'}">
+                                ${streamer.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" onclick="editStreamer(${streamer.id})">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteStreamer(${streamer.id})">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('Error loading streamers:', error);
+            }
+        }
+
+        // Load recent recordings
+        async function loadRecentRecordings() {
+            try {
+                const response = await fetch('/api/recordings?per_page=5');
+                const data = await response.json();
+                
+                const container = document.getElementById('recent-recordings-list');
+                container.innerHTML = '';
+                
+                data.recordings.forEach(recording => {
+                    const div = document.createElement('div');
+                    div.className = 'd-flex justify-content-between align-items-center mb-2 p-2 border rounded';
+                    div.innerHTML = `
+                        <div>
+                            <div class="fw-bold">${recording.filename}</div>
+                            <small class="text-muted">${recording.title || 'No title'}</small>
+                        </div>
+                        <span class="badge status-${recording.status}">${recording.status}</span>
+                    `;
+                    container.appendChild(div);
+                });
+            } catch (error) {
+                console.error('Error loading recent recordings:', error);
+            }
+        }
+
+        // Load system status
+        async function loadStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                document.getElementById('active-streamers').textContent = status.active_streamers;
+                document.getElementById('total-recordings').textContent = status.total_recordings;
+                document.getElementById('recent-recordings').textContent = status.recent_recordings;
+                document.getElementById('download-path').textContent = status.download_path;
+            } catch (error) {
+                console.error('Error loading status:', error);
+            }
+        }
+
+        // Show add streamer modal
+        function showAddStreamerModal() {
+            document.getElementById('addStreamerForm').reset();
+            new bootstrap.Modal(document.getElementById('addStreamerModal')).show();
+        }
+
+        // Add streamer
+        async function addStreamer() {
+            const formData = {
+                username: document.getElementById('username').value,
+                twitch_name: document.getElementById('twitchName').value,
+                quality: document.getElementById('quality').value,
+                timer: parseInt(document.getElementById('timer').value),
+                is_active: document.getElementById('isActive').checked
+            };
+            
+            try {
+                const response = await fetch('/api/streamers', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                if (response.ok) {
+                    bootstrap.Modal.getInstance(document.getElementById('addStreamerModal')).hide();
+                    loadStreamers();
+                    loadStatus();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.error);
+                }
+            } catch (error) {
+                console.error('Error adding streamer:', error);
+                alert('Error adding streamer');
+            }
+        }
+
+        // Edit streamer
+        async function editStreamer(id) {
+            try {
+                const response = await fetch('/api/streamers');
+                const streamers = await response.json();
+                const streamer = streamers.find(s => s.id === id);
+                
+                if (streamer) {
+                    document.getElementById('editStreamerId').value = streamer.id;
+                    document.getElementById('editUsername').value = streamer.username;
+                    document.getElementById('editTwitchName').value = streamer.twitch_name;
+                    document.getElementById('editQuality').value = streamer.quality;
+                    document.getElementById('editTimer').value = streamer.timer;
+                    document.getElementById('editIsActive').checked = streamer.is_active;
+                    
+                    new bootstrap.Modal(document.getElementById('editStreamerModal')).show();
+                }
+            } catch (error) {
+                console.error('Error loading streamer for edit:', error);
+            }
+        }
+
+        // Update streamer
+        async function updateStreamer() {
+            const id = document.getElementById('editStreamerId').value;
+            const formData = {
+                username: document.getElementById('editUsername').value,
+                twitch_name: document.getElementById('editTwitchName').value,
+                quality: document.getElementById('editQuality').value,
+                timer: parseInt(document.getElementById('editTimer').value),
+                is_active: document.getElementById('editIsActive').checked
+            };
+            
+            try {
+                const response = await fetch(`/api/streamers/${id}`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                if (response.ok) {
+                    bootstrap.Modal.getInstance(document.getElementById('editStreamerModal')).hide();
+                    loadStreamers();
+                    loadStatus();
+                } else {
+                    const error = await response.json();
+                    alert('Error: ' + error.error);
+                }
+            } catch (error) {
+                console.error('Error updating streamer:', error);
+                alert('Error updating streamer');
+            }
+        }
+
+        // Delete streamer
+        async function deleteStreamer(id) {
+            if (confirm('Are you sure you want to delete this streamer?')) {
+                try {
+                    const response = await fetch(`/api/streamers/${id}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        loadStreamers();
+                        loadStatus();
+                    } else {
+                        alert('Error deleting streamer');
+                    }
+                } catch (error) {
+                    console.error('Error deleting streamer:', error);
+                    alert('Error deleting streamer');
+                }
+            }
+        }
+
+        // Show recordings modal
+        function showRecordingsModal() {
+            loadRecordings(1);
+            new bootstrap.Modal(document.getElementById('recordingsModal')).show();
+        }
+
+        // Load recordings with pagination
+        async function loadRecordings(page) {
+            try {
+                const response = await fetch(`/api/recordings?page=${page}&per_page=${perPage}`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('recordings-table');
+                tbody.innerHTML = '';
+                
+                data.recordings.forEach(recording => {
+                    const row = document.createElement('tr');
+                    const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                    const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
+                    
+                    row.innerHTML = `
+                        <td>${recording.streamer_id}</td>
+                        <td>${recording.title || 'No title'}</td>
+                        <td>
+                            <span class="badge status-${recording.status}">${recording.status}</span>
+                        </td>
+                        <td>${new Date(recording.started_at).toLocaleString()}</td>
+                        <td>${duration}</td>
+                        <td>${fileSize}</td>
+                    `;
+                    tbody.appendChild(row);
+                });
+                
+                // Update pagination
+                updatePagination(data.current_page, data.pages, data.total);
+                currentPage = page;
+            } catch (error) {
+                console.error('Error loading recordings:', error);
+            }
+        }
+
+        // Update pagination
+        function updatePagination(currentPage, totalPages, total) {
+            const pagination = document.getElementById('recordings-pagination');
+            pagination.innerHTML = '';
+            
+            // Previous button
+            const prevLi = document.createElement('li');
+            prevLi.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a class="page-link" href="#" onclick="loadRecordings(${currentPage - 1})">Previous</a>`;
+            pagination.appendChild(prevLi);
+            
+            // Page numbers
+            for (let i = 1; i <= totalPages; i++) {
+                const li = document.createElement('li');
+                li.className = `page-item ${i === currentPage ? 'active' : ''}`;
+                li.innerHTML = `<a class="page-link" href="#" onclick="loadRecordings(${i})">${i}</a>`;
+                pagination.appendChild(li);
+            }
+            
+            // Next button
+            const nextLi = document.createElement('li');
+            nextLi.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a class="page-link" href="#" onclick="loadRecordings(${currentPage + 1})">Next</a>`;
+            pagination.appendChild(nextLi);
+        }
+
+        // Format duration
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = seconds % 60;
+            return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Refresh status
+        function refreshStatus() {
+            loadStreamers();
+            loadRecentRecordings();
+            loadStatus();
+        }
+    </script>
+</body>
+</html>
