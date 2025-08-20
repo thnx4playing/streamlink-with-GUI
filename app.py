@@ -56,6 +56,23 @@ class Recording(db.Model):
     ended_at = db.Column(db.DateTime)
     file_size = db.Column(db.Integer)  # in bytes
     duration = db.Column(db.Integer)  # in seconds
+    game = db.Column(db.String(255))  # Game/category being played
+
+class ConversionSettings(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    volume_path = db.Column(db.String(500))
+    naming_scheme = db.Column(db.String(50), default='streamer_date_title')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class ConversionJob(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    recording_id = db.Column(db.Integer, db.ForeignKey('recording.id'), nullable=False)
+    status = db.Column(db.String(20), default='pending')  # pending, converting, completed, failed
+    progress = db.Column(db.String(255))
+    output_filename = db.Column(db.String(500))
+    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    completed_at = db.Column(db.DateTime)
 
 class AppConfig:
     def __init__(self, streamer):
@@ -108,6 +125,20 @@ def record_stream(streamer_id):
                 stream_status, title = twitch_manager.check_user(config.user)
                 
                 if stream_status == StreamStatus.ONLINE:
+                    # Get additional stream info including game
+                    try:
+                        user_info = twitch_manager.get_from_twitch('get_users', logins=config.user)
+                        if user_info:
+                            stream_info = twitch_manager.get_from_twitch('get_streams', user_id=user_info.id)
+                            game_name = ""
+                            if stream_info and stream_info.game_id:
+                                game_info = twitch_manager.get_from_twitch('get_games', game_ids=[stream_info.game_id])
+                                if game_info:
+                                    game_name = game_info.name
+                    except Exception as e:
+                        logger.error(f"Error getting game info for {config.user}: {e}")
+                        game_name = ""
+                    
                     # Create safe filename
                     safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
                     timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
@@ -119,6 +150,7 @@ def record_stream(streamer_id):
                         streamer_id=streamer_id,
                         filename=filename,
                         title=title,
+                        game=game_name,
                         status='recording'
                     )
                     db.session.add(recording)
@@ -297,18 +329,25 @@ def get_recordings():
         page=page, per_page=per_page, error_out=False
     )
     
-    return jsonify({
-        'recordings': [{
+    recordings_data = []
+    for r in recordings.items:
+        streamer = Streamer.query.get(r.streamer_id)
+        recordings_data.append({
             'id': r.id,
             'streamer_id': r.streamer_id,
+            'streamer_name': streamer.username if streamer else 'Unknown',
             'filename': r.filename,
             'title': r.title,
+            'game': r.game,
             'status': r.status,
             'started_at': r.started_at.isoformat(),
             'ended_at': r.ended_at.isoformat() if r.ended_at else None,
             'file_size': r.file_size,
             'duration': r.duration
-        } for r in recordings.items],
+        })
+    
+    return jsonify({
+        'recordings': recordings_data,
         'total': recordings.total,
         'pages': recordings.pages,
         'current_page': page
@@ -327,7 +366,7 @@ def get_status():
         'active_streamers': active_streamers,
         'total_recordings': total_recordings,
         'recent_recordings': recent_recordings,
-        'download_path': get_download_path()
+        'download_path': os.getenv('DOWNLOAD_VOLUME_PATH', get_download_path())
     })
 
 @app.route('/api/streamers/<int:streamer_id>/check')
@@ -350,6 +389,177 @@ def check_streamer_status(streamer_id):
             'status': 'ERROR',
             'title': str(e)
         }), 500
+
+@app.route('/api/active-recordings')
+def get_active_recordings():
+    """API endpoint to get currently active recordings"""
+    active_recordings = Recording.query.filter_by(status='recording').all()
+    
+    recordings_data = []
+    for recording in active_recordings:
+        streamer = Streamer.query.get(recording.streamer_id)
+        recordings_data.append({
+            'id': recording.id,
+            'streamer_id': recording.streamer_id,
+            'streamer_name': streamer.username if streamer else 'Unknown',
+            'filename': recording.filename,
+            'title': recording.title,
+            'game': recording.game,
+            'status': recording.status,
+            'started_at': recording.started_at.isoformat(),
+            'file_size': recording.file_size,
+            'duration': recording.duration
+        })
+    
+    return jsonify({'recordings': recordings_data})
+
+@app.route('/api/conversion-settings', methods=['GET'])
+def get_conversion_settings():
+    """API endpoint to get conversion settings"""
+    settings = ConversionSettings.query.first()
+    if not settings:
+        settings = ConversionSettings()
+        db.session.add(settings)
+        db.session.commit()
+    
+    return jsonify({
+        'volume_path': settings.volume_path or '',
+        'naming_scheme': settings.naming_scheme
+    })
+
+@app.route('/api/conversion-settings', methods=['POST'])
+def save_conversion_settings():
+    """API endpoint to save conversion settings"""
+    data = request.get_json()
+    
+    settings = ConversionSettings.query.first()
+    if not settings:
+        settings = ConversionSettings()
+        db.session.add(settings)
+    
+    settings.volume_path = data.get('volume_path', '')
+    settings.naming_scheme = data.get('naming_scheme', 'streamer_date_title')
+    settings.updated_at = datetime.utcnow()
+    
+    db.session.commit()
+    
+    return jsonify({'message': 'Settings saved successfully'})
+
+@app.route('/api/convert-recordings', methods=['POST'])
+def convert_recordings():
+    """API endpoint to start conversion of recordings"""
+    data = request.get_json()
+    recording_ids = data.get('recording_ids', [])
+    
+    for recording_id in recording_ids:
+        # Check if conversion job already exists
+        existing_job = ConversionJob.query.filter_by(recording_id=recording_id).first()
+        if not existing_job:
+            job = ConversionJob(recording_id=recording_id)
+            db.session.add(job)
+    
+    db.session.commit()
+    
+    # Start conversion process in background
+    thread = threading.Thread(target=process_conversions, daemon=True)
+    thread.start()
+    
+    return jsonify({'message': 'Conversion started'})
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Docker"""
+    return jsonify({'status': 'healthy'})
+
+@app.route('/api/conversion-progress')
+def get_conversion_progress():
+    """API endpoint to get conversion progress"""
+    jobs = ConversionJob.query.all()
+    
+    conversions = []
+    for job in jobs:
+        recording = Recording.query.get(job.recording_id)
+        conversions.append({
+            'recording_id': job.recording_id,
+            'filename': recording.filename if recording else 'Unknown',
+            'status': job.status,
+            'progress': job.progress,
+            'output_filename': job.output_filename
+        })
+    
+    return jsonify({'conversions': conversions})
+
+def process_conversions():
+    """Background function to process conversions"""
+    with app.app_context():
+        while True:
+            pending_jobs = ConversionJob.query.filter_by(status='pending').all()
+            
+            for job in pending_jobs:
+                try:
+                    job.status = 'converting'
+                    job.progress = 'Starting conversion...'
+                    db.session.commit()
+                    
+                    # Get recording details
+                    recording = Recording.query.get(job.recording_id)
+                    if not recording:
+                        job.status = 'failed'
+                        job.progress = 'Recording not found'
+                        db.session.commit()
+                        continue
+                    
+                    # Get conversion settings
+                    settings = ConversionSettings.query.first()
+                    if not settings:
+                        settings = ConversionSettings()
+                        db.session.add(settings)
+                        db.session.commit()
+                    
+                    # Build output filename based on naming scheme
+                    output_filename = build_output_filename(recording, settings.naming_scheme)
+                    
+                    # Simulate conversion process (replace with actual FFmpeg call)
+                    job.progress = 'Converting to MP4...'
+                    db.session.commit()
+                    
+                    # For now, just simulate the conversion
+                    time.sleep(5)  # Simulate processing time
+                    
+                    job.status = 'completed'
+                    job.progress = 'Conversion completed'
+                    job.output_filename = output_filename
+                    job.completed_at = datetime.utcnow()
+                    db.session.commit()
+                    
+                except Exception as e:
+                    job.status = 'failed'
+                    job.progress = f'Error: {str(e)}'
+                    db.session.commit()
+            
+            time.sleep(10)  # Check for new jobs every 10 seconds
+
+def build_output_filename(recording, naming_scheme):
+    """Build output filename based on naming scheme"""
+    streamer = Streamer.query.get(recording.streamer_id)
+    streamer_name = streamer.username if streamer else 'unknown'
+    
+    # Clean title for filename
+    safe_title = "".join(c for c in (recording.title or 'untitled') if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    
+    # Get date from recording start time
+    date_str = recording.started_at.strftime('%Y-%m-%d')
+    
+    if naming_scheme == 'streamer_date_title':
+        return f"{streamer_name} - {date_str} - {safe_title}.mp4"
+    elif naming_scheme == 'date_streamer_title':
+        return f"{date_str} - {streamer_name} - {safe_title}.mp4"
+    elif naming_scheme == 'title_date_streamer':
+        return f"{safe_title} - {date_str} - {streamer_name}.mp4"
+    elif naming_scheme == 'streamer_title_date':
+        return f"{streamer_name} - {safe_title} - {date_str}.mp4"
+    else:
+        return f"{streamer_name} - {date_str} - {safe_title}.mp4"
 
 if __name__ == '__main__':
     # Create database tables

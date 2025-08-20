@@ -65,6 +65,18 @@
             <a class="navbar-brand" href="#">
                 <i class="fas fa-video me-2"></i>Streamlink Web GUI
             </a>
+            <ul class="navbar-nav me-auto">
+                <li class="nav-item">
+                    <a class="nav-link active" href="#" onclick="showTab('dashboard')">
+                        <i class="fas fa-tachometer-alt me-1"></i>Dashboard
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="showTab('conversion')">
+                        <i class="fas fa-cog me-1"></i>Conversion
+                    </a>
+                </li>
+            </ul>
             <div class="navbar-nav ms-auto">
                 <span class="navbar-text">
                     <i class="fas fa-circle text-success me-1"></i>System Online
@@ -74,8 +86,10 @@
     </nav>
 
     <div class="container-fluid mt-4">
-        <!-- Stats Cards -->
-        <div class="row mb-4">
+        <!-- Dashboard Tab -->
+        <div id="dashboard-tab">
+            <!-- Stats Cards -->
+            <div class="row mb-4">
             <div class="col-md-3">
                 <div class="card stats-card">
                     <div class="card-body">
@@ -126,7 +140,7 @@
                     <div class="card-body">
                         <div class="d-flex justify-content-between">
                             <div>
-                                <h6 class="card-title">Download Path</h6>
+                                <h6 class="card-title">Volume Path</h6>
                                 <small id="download-path">./download</small>
                             </div>
                             <div class="align-self-center">
@@ -138,10 +152,29 @@
             </div>
         </div>
 
-        <!-- Main Content -->
-        <div class="row">
-            <!-- Streamers Management -->
-            <div class="col-lg-8">
+            <!-- Main Content -->
+            <div class="row">
+                <!-- Active Recordings -->
+                <div class="col-12 mb-4">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">
+                                <i class="fas fa-broadcast-tower me-2"></i>Active Recordings
+                            </h5>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="refreshActiveRecordings()">
+                                <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                            </button>
+                        </div>
+                        <div class="card-body">
+                            <div id="active-recordings-list">
+                                <!-- Active recordings will be loaded here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Streamers Management -->
+                <div class="col-lg-8">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">
@@ -339,6 +372,107 @@
                             <!-- Pagination will be generated here -->
                         </ul>
                     </nav>
+                </div>
+            </div>
+        </div>
+
+        <!-- Conversion Tab -->
+        <div id="conversion-tab" style="display: none;">
+            <div class="row">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header">
+                            <h5 class="mb-0">
+                                <i class="fas fa-cog me-2"></i>Conversion Settings
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <form id="conversion-settings-form">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="conversion-volume-path" class="form-label">Volume Path</label>
+                                            <input type="text" class="form-control" id="conversion-volume-path" placeholder="/path/to/your/download/directory">
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label for="file-naming-scheme" class="form-label">File Naming Scheme</label>
+                                            <select class="form-select" id="file-naming-scheme">
+                                                <option value="streamer_date_title">Streamer - Date - Title</option>
+                                                <option value="date_streamer_title">Date - Streamer - Title</option>
+                                                <option value="title_date_streamer">Title - Date - Streamer</option>
+                                                <option value="streamer_title_date">Streamer - Title - Date</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                                <button type="button" class="btn btn-primary" onclick="saveConversionSettings()">
+                                    <i class="fas fa-save me-1"></i>Save Settings
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="row mt-4">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0">
+                                <i class="fas fa-film me-2"></i>Recordings for Conversion
+                            </h5>
+                            <div>
+                                <button class="btn btn-sm btn-outline-secondary me-2" onclick="refreshRecordingsForConversion()">
+                                    <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                                </button>
+                                <button class="btn btn-sm btn-primary" onclick="convertSelectedRecordings()" id="convert-btn" disabled>
+                                    <i class="fas fa-cog me-1"></i>Convert Selected
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>
+                                                <input type="checkbox" id="select-all-recordings" onchange="toggleAllRecordings()">
+                                            </th>
+                                            <th>Streamer</th>
+                                            <th>Title</th>
+                                            <th>Status</th>
+                                            <th>Started</th>
+                                            <th>Duration</th>
+                                            <th>File Size</th>
+                                            <th>Conversion Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="conversion-recordings-table">
+                                        <!-- Recordings for conversion will be loaded here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Conversion Progress Modal -->
+            <div class="modal fade" id="conversionProgressModal" tabindex="-1">
+                <div class="modal-dialog modal-lg">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Conversion Progress</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="conversion-progress-list">
+                                <!-- Conversion progress will be shown here -->
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -655,6 +789,347 @@
             loadRecentRecordings();
             loadStatus();
         }
+
+        // Tab management
+        function showTab(tabName) {
+            // Hide all tabs
+            document.getElementById('dashboard-tab').style.display = 'none';
+            document.getElementById('conversion-tab').style.display = 'none';
+            
+            // Show selected tab
+            document.getElementById(tabName + '-tab').style.display = 'block';
+            
+            // Update navigation
+            document.querySelectorAll('.nav-link').forEach(link => link.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Load tab-specific data
+            if (tabName === 'conversion') {
+                loadRecordingsForConversion();
+                loadConversionSettings();
+            }
+        }
+
+        // Load active recordings
+        async function loadActiveRecordings() {
+            try {
+                const response = await fetch('/api/active-recordings');
+                const data = await response.json();
+                
+                const container = document.getElementById('active-recordings-list');
+                container.innerHTML = '';
+                
+                if (data.recordings.length === 0) {
+                    container.innerHTML = '<div class="text-center text-muted">No active recordings</div>';
+                    return;
+                }
+                
+                data.recordings.forEach(recording => {
+                    const div = document.createElement('div');
+                    div.className = 'd-flex justify-content-between align-items-center mb-2 p-3 border rounded bg-light';
+                    div.innerHTML = `
+                        <div>
+                            <div class="fw-bold">${recording.streamer_name}</div>
+                            <div class="text-muted">${recording.title || 'No title'}</div>
+                            <small class="text-info">Game: ${recording.game || 'Unknown'}</small>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-warning">RECORDING</span>
+                            <div class="small text-muted">Started: ${new Date(recording.started_at).toLocaleTimeString()}</div>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                });
+            } catch (error) {
+                console.error('Error loading active recordings:', error);
+            }
+        }
+
+        // Refresh active recordings
+        function refreshActiveRecordings() {
+            loadActiveRecordings();
+        }
+
+        // Load recordings for conversion
+        async function loadRecordingsForConversion() {
+            try {
+                const response = await fetch('/api/recordings?per_page=50');
+                const data = await response.json();
+                
+                const tbody = document.getElementById('conversion-recordings-table');
+                tbody.innerHTML = '';
+                
+                data.recordings.forEach(recording => {
+                    const row = document.createElement('tr');
+                    const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                    const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
+                    
+                    row.innerHTML = `
+                        <td>
+                            <input type="checkbox" class="recording-checkbox" value="${recording.id}" onchange="updateConvertButton()">
+                        </td>
+                        <td>${recording.streamer_name || recording.streamer_id}</td>
+                        <td>${recording.title || 'No title'}</td>
+                        <td>
+                            <span class="badge status-${recording.status}">${recording.status}</span>
+                        </td>
+                        <td>${new Date(recording.started_at).toLocaleString()}</td>
+                        <td>${duration}</td>
+                        <td>${fileSize}</td>
+                        <td>
+                            <span class="badge bg-secondary" id="conversion-status-${recording.id}">Not Converted</span>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('Error loading recordings for conversion:', error);
+            }
+        }
+
+        // Refresh recordings for conversion
+        function refreshRecordingsForConversion() {
+            loadRecordingsForConversion();
+        }
+
+        // Toggle all recordings selection
+        function toggleAllRecordings() {
+            const selectAll = document.getElementById('select-all-recordings');
+            const checkboxes = document.querySelectorAll('.recording-checkbox');
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAll.checked;
+            });
+            
+            updateConvertButton();
+        }
+
+        // Update convert button state
+        function updateConvertButton() {
+            const checkboxes = document.querySelectorAll('.recording-checkbox:checked');
+            const convertBtn = document.getElementById('convert-btn');
+            
+            convertBtn.disabled = checkboxes.length === 0;
+        }
+
+        // Load conversion settings
+        async function loadConversionSettings() {
+            try {
+                const response = await fetch('/api/conversion-settings');
+                const settings = await response.json();
+                
+                document.getElementById('conversion-volume-path').value = settings.volume_path || '';
+                document.getElementById('file-naming-scheme').value = settings.naming_scheme || 'streamer_date_title';
+            } catch (error) {
+                console.error('Error loading conversion settings:', error);
+            }
+        }
+
+        // Save conversion settings
+        async function saveConversionSettings() {
+            const settings = {
+                volume_path: document.getElementById('conversion-volume-path').value,
+                naming_scheme: document.getElementById('file-naming-scheme').value
+            };
+            
+            try {
+                const response = await fetch('/api/conversion-settings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(settings)
+                });
+                
+                if (response.ok) {
+                    alert('Settings saved successfully!');
+                } else {
+                    alert('Error saving settings');
+                }
+            } catch (error) {
+                console.error('Error saving conversion settings:', error);
+                alert('Error saving settings');
+            }
+        }
+
+        // Convert selected recordings
+        async function convertSelectedRecordings() {
+            const checkboxes = document.querySelectorAll('.recording-checkbox:checked');
+            const recordingIds = Array.from(checkboxes).map(cb => cb.value);
+            
+            if (recordingIds.length === 0) {
+                alert('Please select recordings to convert');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/convert-recordings', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ recording_ids: recordingIds })
+                });
+                
+                if (response.ok) {
+                    // Show progress modal
+                    new bootstrap.Modal(document.getElementById('conversionProgressModal')).show();
+                    
+                    // Start polling for progress
+                    pollConversionProgress(recordingIds);
+                    
+                    // Update status badges
+                    recordingIds.forEach(id => {
+                        const statusBadge = document.getElementById(`conversion-status-${id}`);
+                        if (statusBadge) {
+                            statusBadge.textContent = 'Converting...';
+                            statusBadge.className = 'badge bg-warning';
+                        }
+                    });
+                    
+                    // Uncheck all checkboxes
+                    checkboxes.forEach(cb => cb.checked = false);
+                    document.getElementById('select-all-recordings').checked = false;
+                    updateConvertButton();
+                } else {
+                    alert('Error starting conversion');
+                }
+            } catch (error) {
+                console.error('Error converting recordings:', error);
+                alert('Error converting recordings');
+            }
+        }
+
+        // Poll conversion progress
+        async function pollConversionProgress(recordingIds) {
+            const progressList = document.getElementById('conversion-progress-list');
+            
+            const pollInterval = setInterval(async () => {
+                try {
+                    const response = await fetch('/api/conversion-progress');
+                    const progress = await response.json();
+                    
+                    progressList.innerHTML = '';
+                    
+                    let allCompleted = true;
+                    
+                    progress.conversions.forEach(conv => {
+                        const div = document.createElement('div');
+                        div.className = 'mb-3 p-3 border rounded';
+                        
+                        let statusClass = 'bg-secondary';
+                        if (conv.status === 'converting') statusClass = 'bg-warning';
+                        else if (conv.status === 'completed') statusClass = 'bg-success';
+                        else if (conv.status === 'failed') statusClass = 'bg-danger';
+                        
+                        div.innerHTML = `
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>${conv.filename}</strong>
+                                    <div class="small text-muted">${conv.progress || ''}</div>
+                                </div>
+                                <span class="badge ${statusClass}">${conv.status.toUpperCase()}</span>
+                            </div>
+                        `;
+                        
+                        progressList.appendChild(div);
+                        
+                        if (conv.status !== 'completed' && conv.status !== 'failed') {
+                            allCompleted = false;
+                        }
+                        
+                        // Update status badge in table
+                        const statusBadge = document.getElementById(`conversion-status-${conv.recording_id}`);
+                        if (statusBadge) {
+                            statusBadge.textContent = conv.status.toUpperCase();
+                            statusBadge.className = `badge ${statusClass}`;
+                        }
+                    });
+                    
+                    if (allCompleted) {
+                        clearInterval(pollInterval);
+                        setTimeout(() => {
+                            bootstrap.Modal.getInstance(document.getElementById('conversionProgressModal')).hide();
+                        }, 3000);
+                    }
+                } catch (error) {
+                    console.error('Error polling conversion progress:', error);
+                }
+            }, 2000);
+        }
+
+        // Enhanced streamer loading with real-time status checking
+        async function loadStreamers() {
+            try {
+                const response = await fetch('/api/streamers');
+                const streamers = await response.json();
+                
+                const tbody = document.getElementById('streamers-table');
+                tbody.innerHTML = '';
+                
+                // Check status for each streamer
+                for (const streamer of streamers) {
+                    try {
+                        const statusResponse = await fetch(`/api/streamers/${streamer.id}/check`);
+                        const statusData = await statusResponse.json();
+                        streamer.status = statusData.status;
+                        streamer.title = statusData.title;
+                    } catch (error) {
+                        streamer.status = 'ERROR';
+                        streamer.title = '';
+                    }
+                }
+                
+                streamers.forEach(streamer => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td>${streamer.username}</td>
+                        <td>${streamer.twitch_name}</td>
+                        <td>
+                            <span class="status-${streamer.status?.toLowerCase() || 'offline'}">
+                                <i class="fas fa-circle me-1"></i>${streamer.status || 'OFFLINE'}
+                            </span>
+                        </td>
+                        <td>${streamer.quality}</td>
+                        <td>${streamer.timer}</td>
+                        <td>
+                            <span class="badge ${streamer.is_active ? 'bg-success' : 'bg-secondary'}">
+                                ${streamer.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" onclick="editStreamer(${streamer.id})">
+                                    <i class="fas fa-edit"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="deleteStreamer(${streamer.id})">
+                                    <i class="fas fa-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+            } catch (error) {
+                console.error('Error loading streamers:', error);
+            }
+        }
+
+        // Initialize with active recordings
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStreamers();
+            loadRecentRecordings();
+            loadStatus();
+            loadActiveRecordings();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(function() {
+                loadStreamers();
+                loadRecentRecordings();
+                loadStatus();
+                loadActiveRecordings();
+            }, 30000);
+        });
     </script>
 </body>
 </html>
