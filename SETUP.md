@@ -37,11 +37,12 @@ This guide will help you set up and run the Streamlink Web GUI on your system.
    cp env.example .env
    ```
 
-2. Edit the `.env` file with your Twitch credentials:
+2. Edit the `.env` file with your Twitch credentials and download path:
    ```env
    TWITCH_CLIENT_ID=your_client_id_here
    TWITCH_CLIENT_SECRET=your_client_secret_here
    TWITCH_OAUTH_TOKEN=your_oauth_token_here
+   DOWNLOAD_VOLUME_PATH=/path/to/your/download/directory
    ```
 
 ## Step 3: Start the Web GUI
