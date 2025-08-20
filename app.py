@@ -411,7 +411,7 @@ def get_status():
     active_streamers = Streamer.query.filter_by(is_active=True).count()
     total_recordings = Recording.query.count()
     recent_recordings = Recording.query.filter(
-        Recording.started_at >= datetime.now(datetime.timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        Recording.started_at >= datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     ).count()
     
     return jsonify({
