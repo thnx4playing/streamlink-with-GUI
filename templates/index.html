@@ -203,15 +203,15 @@
                         <div class="table-responsive">
                             <table class="table table-hover">
                                 <thead>
-                                    <tr>
-                                        <th>Username</th>
-                                        <th>Twitch Name</th>
-                                        <th>Status</th>
-                                        <th>Quality</th>
-                                        <th>Timer (s)</th>
-                                        <th>Active</th>
-                                        <th>Actions</th>
-                                    </tr>
+                                                                         <tr>
+                                         <th>Display Name</th>
+                                         <th>Twitch Name</th>
+                                         <th>Status</th>
+                                         <th>Quality</th>
+                                         <th>Timer (s)</th>
+                                         <th>Active</th>
+                                         <th>Actions</th>
+                                     </tr>
                                 </thead>
                                 <tbody id="streamers-table">
                                     <!-- Streamers will be loaded here -->
@@ -253,10 +253,10 @@
                 </div>
                 <div class="modal-body">
                     <form id="addStreamerForm">
-                        <div class="mb-3">
-                            <label for="username" class="form-label">Username</label>
-                            <input type="text" class="form-control" id="username" required>
-                        </div>
+                                                 <div class="mb-3">
+                             <label for="username" class="form-label">Display Name</label>
+                             <input type="text" class="form-control" id="username" required>
+                         </div>
                         <div class="mb-3">
                             <label for="twitchName" class="form-label">Twitch Name</label>
                             <input type="text" class="form-control" id="twitchName" required>
@@ -308,10 +308,10 @@
                 <div class="modal-body">
                     <form id="editStreamerForm">
                         <input type="hidden" id="editStreamerId">
-                        <div class="mb-3">
-                            <label for="editUsername" class="form-label">Username</label>
-                            <input type="text" class="form-control" id="editUsername" required>
-                        </div>
+                                                 <div class="mb-3">
+                             <label for="editUsername" class="form-label">Display Name</label>
+                             <input type="text" class="form-control" id="editUsername" required>
+                         </div>
                         <div class="mb-3">
                             <label for="editTwitchName" class="form-label">Twitch Name</label>
                             <input type="text" class="form-control" id="editTwitchName" required>
