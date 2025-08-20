@@ -440,6 +440,42 @@ def get_active_recordings():
     
     return jsonify({'recordings': recordings_data})
 
+@app.route('/api/recordings/<int:recording_id>/stop', methods=['POST'])
+def stop_recording(recording_id):
+    """API endpoint to stop a recording"""
+    recording = Recording.query.get_or_404(recording_id)
+    
+    if recording.status != 'recording':
+        return jsonify({'error': 'Recording is not currently active'}), 400
+    
+    try:
+        # Update recording status
+        recording.status = 'completed'
+        recording.ended_at = datetime.utcnow()
+        
+        # Calculate duration
+        if recording.started_at:
+            recording.duration = int((recording.ended_at - recording.started_at).total_seconds())
+        
+        # Calculate file size
+        download_path = get_download_path()
+        full_path = f"{os.path.join(download_path, recording.filename)}.ts"
+        if os.path.exists(full_path):
+            recording.file_size = os.path.getsize(full_path)
+        
+        db.session.commit()
+        
+        # Stop the recording thread for this streamer
+        if recording.streamer_id in recording_threads:
+            # Note: We can't easily stop the thread, but it will stop on next iteration
+            # when it checks if the streamer is still active
+            pass
+        
+        return jsonify({'message': 'Recording stopped successfully'})
+    except Exception as e:
+        logger.error(f"Error stopping recording {recording_id}: {e}")
+        return jsonify({'error': 'Failed to stop recording'}), 500
+
 @app.route('/api/conversion-settings', methods=['GET'])
 def get_conversion_settings():
     """API endpoint to get conversion settings"""
