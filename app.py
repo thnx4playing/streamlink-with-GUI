@@ -29,21 +29,10 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this')
 
-# Ensure config directory exists (use relative path inside container)
-config_dir = os.getenv('CONFIG_VOLUME_PATH', '/app/config')
-
-# Try to create config directory, but don't fail if it already exists
-try:
-    os.makedirs(config_dir, exist_ok=True)
-except PermissionError:
-    # If we can't create the directory, try using a fallback path
-    config_dir = '/app/config'
-    try:
-        os.makedirs(config_dir, exist_ok=True)
-    except PermissionError:
-        # Last resort: use current directory
-        config_dir = '.'
-        os.makedirs(config_dir, exist_ok=True)
+# Always use a fixed internal path for the database
+# Docker volumes will handle the mapping to host paths
+config_dir = '/app/config'
+os.makedirs(config_dir, exist_ok=True)
 
 # Use config directory for database
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{config_dir}/streamlink.db'
@@ -582,13 +571,14 @@ def build_output_filename(recording, naming_scheme):
 
 if __name__ == '__main__':
     # Create database tables with retry logic
-    max_retries = 5
-    retry_delay = 2
+    max_retries = 3
+    retry_delay = 1
     
     for attempt in range(max_retries):
         try:
             with app.app_context():
                 db.create_all()
+                logger.info("Database created successfully")
                 break
         except Exception as e:
             if attempt < max_retries - 1:
@@ -598,12 +588,23 @@ if __name__ == '__main__':
                 retry_delay *= 2  # Exponential backoff
             else:
                 logger.error(f"Failed to create database after {max_retries} attempts: {e}")
-                # Use a fallback database location
-                fallback_db_path = '/tmp/streamlink.db'
-                app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{fallback_db_path}'
-                with app.app_context():
-                    db.create_all()
-                logger.info(f"Created database in fallback location: {fallback_db_path}")
+                # Try multiple fallback locations
+                fallback_paths = ['/tmp/streamlink.db', '/app/streamlink.db', './streamlink.db']
+                
+                for fallback_path in fallback_paths:
+                    try:
+                        logger.info(f"Trying fallback database location: {fallback_path}")
+                        app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{fallback_path}'
+                        with app.app_context():
+                            db.create_all()
+                        logger.info(f"Created database in fallback location: {fallback_path}")
+                        break
+                    except Exception as fallback_error:
+                        logger.warning(f"Fallback location {fallback_path} failed: {fallback_error}")
+                        continue
+                else:
+                    logger.error("All database locations failed. Exiting.")
+                    exit(1)
     
     # Start recording threads for existing active streamers
     try:
