@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this')
 
-# Ensure config directory exists
-config_dir = os.getenv('CONFIG_VOLUME_PATH', './config')
+# Ensure config directory exists (use relative path inside container)
+config_dir = os.getenv('CONFIG_VOLUME_PATH', '/app/config')
 os.makedirs(config_dir, exist_ok=True)
 
 # Use config directory for database
