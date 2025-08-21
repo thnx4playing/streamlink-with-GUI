@@ -413,87 +413,87 @@
              </div>
         </div>
 
-                         <!-- Main Content -->
-             <div class="row">
-                 <!-- Active Recordings -->
-                 <div class="col-lg-6 mb-4">
-                     <div class="card">
-                         <div class="card-header d-flex justify-content-between align-items-center">
-                             <h5 class="mb-0">
-                                 <i class="fas fa-broadcast-tower me-2"></i>Active Recordings
-                             </h5>
-                             <button class="btn btn-sm btn-outline-secondary" onclick="refreshActiveRecordings()">
-                                 <i class="fas fa-sync-alt refresh-btn"></i> Refresh
-                             </button>
-                         </div>
-                         <div class="card-body">
-                             <div id="active-recordings-list">
-                                 <!-- Active recordings will be loaded here -->
-                             </div>
-                         </div>
-                     </div>
-                 </div>
+                                                   <!-- Streamers Management -->
+              <div class="row">
+                  <div class="col-12">
+                      <div class="card">
+                          <div class="card-header d-flex justify-content-between align-items-center">
+                              <h5 class="mb-0">
+                                  <i class="fas fa-users me-2"></i>Streamers Management
+                              </h5>
+                              <div>
+                                  <button class="btn btn-sm btn-outline-secondary me-2" onclick="refreshStatus()">
+                                      <i class="fas fa-sync-alt refresh-btn"></i> Refresh Status
+                                  </button>
+                                  <button class="btn btn-sm btn-primary" onclick="showAddStreamerModal()">
+                                      <i class="fas fa-plus me-1"></i>Add Streamer
+                                  </button>
+                              </div>
+                          </div>
+                          <div class="card-body">
+                              <div class="table-responsive">
+                                  <table class="table table-hover">
+                                      <thead>
+                                          <tr>
+                                              <th>Display Name</th>
+                                              <th>Twitch Name</th>
+                                              <th>Status</th>
+                                              <th>Quality</th>
+                                              <th>Timer (s)</th>
+                                              <th>Active</th>
+                                              <th>Actions</th>
+                                          </tr>
+                                      </thead>
+                                      <tbody id="streamers-table">
+                                          <!-- Streamers will be loaded here -->
+                                      </tbody>
+                                  </table>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
 
-                 <!-- Recent Recordings -->
-                 <div class="col-lg-6 mb-4">
-                     <div class="card">
-                         <div class="card-header d-flex justify-content-between align-items-center">
-                             <h5 class="mb-0">
-                                 <i class="fas fa-history me-2"></i>Recent Recordings
-                             </h5>
-                             <button class="btn btn-sm btn-outline-primary" onclick="showRecordingsModal()">
-                                 View All
-                             </button>
-                         </div>
-                         <div class="card-body">
-                             <div id="recent-recordings-list">
-                                 <!-- Recent recordings will be loaded here -->
-                             </div>
-                         </div>
-                     </div>
-                 </div>
-             </div>
+              <!-- Main Content -->
+              <div class="row">
+                  <!-- Active Recordings -->
+                  <div class="col-lg-6 mb-4">
+                      <div class="card">
+                          <div class="card-header d-flex justify-content-between align-items-center">
+                              <h5 class="mb-0">
+                                  <i class="fas fa-broadcast-tower me-2"></i>Active Recordings
+                              </h5>
+                              <button class="btn btn-sm btn-outline-secondary" onclick="refreshActiveRecordings()">
+                                  <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                              </button>
+                          </div>
+                          <div class="card-body">
+                              <div id="active-recordings-list">
+                                  <!-- Active recordings will be loaded here -->
+                              </div>
+                          </div>
+                      </div>
+                  </div>
 
-             <!-- Streamers Management -->
-             <div class="row">
-                 <div class="col-12">
-                     <div class="card">
-                         <div class="card-header d-flex justify-content-between align-items-center">
-                             <h5 class="mb-0">
-                                 <i class="fas fa-users me-2"></i>Streamers Management
-                             </h5>
-                             <div>
-                                 <button class="btn btn-sm btn-outline-secondary me-2" onclick="refreshStatus()">
-                                     <i class="fas fa-sync-alt refresh-btn"></i> Refresh Status
-                                 </button>
-                                 <button class="btn btn-sm btn-primary" onclick="showAddStreamerModal()">
-                                     <i class="fas fa-plus me-1"></i>Add Streamer
-                                 </button>
-                             </div>
-                         </div>
-                         <div class="card-body">
-                             <div class="table-responsive">
-                                 <table class="table table-hover">
-                                     <thead>
-                                         <tr>
-                                             <th>Display Name</th>
-                                             <th>Twitch Name</th>
-                                             <th>Status</th>
-                                             <th>Quality</th>
-                                             <th>Timer (s)</th>
-                                             <th>Active</th>
-                                             <th>Actions</th>
-                                         </tr>
-                                     </thead>
-                                     <tbody id="streamers-table">
-                                         <!-- Streamers will be loaded here -->
-                                     </tbody>
-                                 </table>
-                             </div>
-                         </div>
-                     </div>
-                 </div>
-             </div>
+                  <!-- Recent Recordings -->
+                  <div class="col-lg-6 mb-4">
+                      <div class="card">
+                          <div class="card-header d-flex justify-content-between align-items-center">
+                              <h5 class="mb-0">
+                                  <i class="fas fa-history me-2"></i>Recent Recordings
+                              </h5>
+                              <button class="btn btn-sm btn-outline-primary" onclick="showRecordingsModal()">
+                                  View All
+                              </button>
+                          </div>
+                          <div class="card-body">
+                              <div id="recent-recordings-list">
+                                  <!-- Recent recordings will be loaded here -->
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
     </div>
 
     <!-- Add Streamer Modal -->
@@ -859,7 +859,6 @@
                 const streamers = await response.json();
                 
                 const tbody = document.getElementById('streamers-table');
-                tbody.innerHTML = '';
                 
                 // Check status for each streamer
                 for (const streamer of streamers) {
@@ -874,8 +873,17 @@
                     }
                 }
                 
-                streamers.forEach(streamer => {
-                    const row = document.createElement('tr');
+                // Update existing rows or create new ones
+                streamers.forEach((streamer, index) => {
+                    let row = tbody.children[index];
+                    
+                    // If row doesn't exist, create it
+                    if (!row) {
+                        row = document.createElement('tr');
+                        tbody.appendChild(row);
+                    }
+                    
+                    // Update row content
                     row.innerHTML = `
                         <td>${streamer.username}</td>
                         <td>${streamer.twitch_name}</td>
@@ -891,19 +899,23 @@
                                 ${streamer.is_active ? 'Active' : 'Inactive'}
                             </span>
                         </td>
-                        <td>
-                            <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-primary" onclick="editStreamer(${streamer.id})">
-                                    <i class="fas fa-edit"></i>
-                                </button>
-                                <button class="btn btn-outline-danger" onclick="deleteStreamer(${streamer.id})">
-                                    <i class="fas fa-trash"></i>
-                                </button>
-                            </div>
-                        </td>
+                                                 <td>
+                             <div class="d-flex gap-1">
+                                 <button class="btn btn-sm btn-outline-primary" onclick="editStreamer(${streamer.id})">
+                                     <i class="fas fa-edit"></i>
+                                 </button>
+                                 <button class="btn btn-sm btn-outline-danger" onclick="deleteStreamer(${streamer.id})">
+                                     <i class="fas fa-trash"></i>
+                                 </button>
+                             </div>
+                         </td>
                     `;
-                    tbody.appendChild(row);
                 });
+                
+                // Remove any extra rows that shouldn't be there
+                while (tbody.children.length > streamers.length) {
+                    tbody.removeChild(tbody.lastChild);
+                }
             } catch (error) {
                 console.error('Error loading streamers:', error);
             }
@@ -916,19 +928,29 @@
                 const data = await response.json();
                 
                 const container = document.getElementById('recent-recordings-list');
-                container.innerHTML = '';
                 
                 // Only show the first 5 recordings
                 const recentRecordings = data.recordings.slice(0, 5);
                 
                 if (recentRecordings.length === 0) {
-                    container.innerHTML = '<div class="text-center text-muted">No recordings found</div>';
+                    if (container.children.length === 0 || container.children[0].textContent !== 'No recordings found') {
+                        container.innerHTML = '<div class="text-center text-muted">No recordings found</div>';
+                    }
                     return;
                 }
                 
-                recentRecordings.forEach(recording => {
-                    const div = document.createElement('div');
-                    div.className = 'd-flex justify-content-between align-items-center mb-2 p-2 border rounded';
+                // Update existing recordings or create new ones
+                recentRecordings.forEach((recording, index) => {
+                    let div = container.children[index];
+                    
+                    // If div doesn't exist, create it
+                    if (!div) {
+                        div = document.createElement('div');
+                        div.className = 'd-flex justify-content-between align-items-center mb-2 p-2 border rounded';
+                        container.appendChild(div);
+                    }
+                    
+                    // Update div content
                     div.innerHTML = `
                         <div>
                             <div class="fw-bold">${recording.filename}</div>
@@ -936,8 +958,12 @@
                         </div>
                         <span class="badge status-${recording.status}">${recording.status}</span>
                     `;
-                    container.appendChild(div);
                 });
+                
+                // Remove any extra recordings that shouldn't be there
+                while (container.children.length > recentRecordings.length) {
+                    container.removeChild(container.lastChild);
+                }
             } catch (error) {
                 console.error('Error loading recent recordings:', error);
             }
@@ -1246,32 +1272,46 @@
                 const data = await response.json();
                 
                 const container = document.getElementById('active-recordings-list');
-                container.innerHTML = '';
                 
                 if (data.recordings.length === 0) {
-                    container.innerHTML = '<div class="text-center text-muted">No active recordings</div>';
+                    if (container.children.length === 0 || container.children[0].textContent !== 'No active recordings') {
+                        container.innerHTML = '<div class="text-center text-muted">No active recordings</div>';
+                    }
                     return;
                 }
                 
-                                 data.recordings.forEach(recording => {
-                     const div = document.createElement('div');
-                     div.className = 'd-flex justify-content-between align-items-center mb-2 p-3 border rounded bg-light';
-                     div.innerHTML = `
-                         <div>
-                             <div class="fw-bold">${recording.streamer_name}</div>
-                             <div class="text-muted">${recording.title || 'No title'}</div>
-                             <small class="text-info">Game: ${recording.game || 'Unknown'}</small>
-                         </div>
-                         <div class="text-end">
-                             <span class="badge bg-warning">RECORDING</span>
-                             <div class="small text-muted">Started: ${new Date(recording.started_at).toLocaleTimeString()}</div>
-                             <button class="btn btn-sm btn-danger mt-1" onclick="stopRecording(${recording.id})">
-                                 <i class="fas fa-stop me-1"></i>Stop
-                             </button>
-                         </div>
-                     `;
-                     container.appendChild(div);
-                 });
+                // Update existing recordings or create new ones
+                data.recordings.forEach((recording, index) => {
+                    let div = container.children[index];
+                    
+                    // If div doesn't exist, create it
+                    if (!div) {
+                        div = document.createElement('div');
+                        div.className = 'd-flex justify-content-between align-items-center mb-2 p-3 border rounded bg-light';
+                        container.appendChild(div);
+                    }
+                    
+                    // Update div content
+                    div.innerHTML = `
+                        <div>
+                            <div class="fw-bold">${recording.streamer_name}</div>
+                            <div class="text-muted">${recording.title || 'No title'}</div>
+                            <small class="text-info">Game: ${recording.game || 'Unknown'}</small>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-warning">RECORDING</span>
+                            <div class="small text-muted">Started: ${new Date(recording.started_at).toLocaleTimeString()}</div>
+                            <button class="btn btn-sm btn-danger mt-1" onclick="stopRecording(${recording.id})">
+                                <i class="fas fa-stop me-1"></i>Stop
+                            </button>
+                        </div>
+                    `;
+                });
+                
+                // Remove any extra recordings that shouldn't be there
+                while (container.children.length > data.recordings.length) {
+                    container.removeChild(container.lastChild);
+                }
             } catch (error) {
                 console.error('Error loading active recordings:', error);
             }
