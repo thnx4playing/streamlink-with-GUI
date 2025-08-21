@@ -320,6 +320,11 @@ def index():
                          recordings=recordings,
                          streamer_status=streamer_status)
 
+@app.route('/favicon-new.png')
+def favicon():
+    """Serve favicon"""
+    return send_from_directory('.', 'favicon-new.png')
+
 @app.route('/api/streamers', methods=['GET'])
 def get_streamers():
     """API endpoint to get all streamers"""
