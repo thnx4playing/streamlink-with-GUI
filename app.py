@@ -133,6 +133,51 @@ def get_converted_path():
     # Always use the internal container path for converted files
     return '/app/converted'
 
+def get_recording_status(recording):
+    """Determine the actual status of a recording based on file existence and extension"""
+    if not recording.filename:
+        return 'unknown'
+    
+    download_path = get_download_path()
+    ts_path = os.path.join(download_path, f"{recording.filename}.ts")
+    part_path = os.path.join(download_path, f"{recording.filename}.part")
+    
+    # Check if file exists and determine status
+    if os.path.exists(ts_path):
+        return 'completed'
+    elif os.path.exists(part_path):
+        return 'failed'
+    else:
+        return 'deleted'
+
+def is_recording_convertible(recording):
+    """Check if a recording can be converted (completed .ts file exists)"""
+    if not recording.filename:
+        return False
+    
+    download_path = get_download_path()
+    ts_path = os.path.join(download_path, f"{recording.filename}.ts")
+    return os.path.exists(ts_path)
+
+def safe_delete_recording_file(filename):
+    """Safely delete recording files (.ts and .part)"""
+    download_path = get_download_path()
+    ts_path = os.path.join(download_path, f"{filename}.ts")
+    part_path = os.path.join(download_path, f"{filename}.part")
+    
+    deleted_files = []
+    try:
+        if os.path.exists(ts_path):
+            os.remove(ts_path)
+            deleted_files.append(f"{filename}.ts")
+        if os.path.exists(part_path):
+            os.remove(part_path)
+            deleted_files.append(f"{filename}.part")
+        return True, deleted_files
+    except Exception as e:
+        logger.error(f"Error deleting recording files for {filename}: {e}")
+        return False, deleted_files
+
 def ensure_download_directory():
     """Ensure the download directory exists"""
     download_path = get_download_path()
@@ -209,15 +254,22 @@ def record_stream(streamer_id):
                     try:
                         streamlink_manager.run_streamlink(config.user, recorded_filename)
                         
-                        # Update recording status
-                        recording.status = 'completed'
+                        # Update recording status based on actual file existence
                         recording.ended_at = datetime.utcnow()
                         
-                        # Calculate file size and duration
-                        full_path = f"{recorded_filename}.ts"
-                        if os.path.exists(full_path):
-                            recording.file_size = os.path.getsize(full_path)
+                        # Check if .ts file exists (completed) or .part file exists (failed)
+                        ts_path = f"{recorded_filename}.ts"
+                        part_path = f"{recorded_filename}.part"
+                        
+                        if os.path.exists(ts_path):
+                            recording.status = 'completed'
+                            recording.file_size = os.path.getsize(ts_path)
                             recording.duration = int((recording.ended_at - recording.started_at).total_seconds())
+                        elif os.path.exists(part_path):
+                            recording.status = 'failed'
+                            recording.file_size = os.path.getsize(part_path)
+                        else:
+                            recording.status = 'failed'  # No file found
                         
                         db.session.commit()
                         
@@ -385,8 +437,9 @@ def get_recordings():
     try:
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 20, type=int)
+        conversion_only = request.args.get('conversion_only', 'false').lower() == 'true'
         
-        logger.info(f"Fetching recordings: page={page}, per_page={per_page}")
+        logger.info(f"Fetching recordings: page={page}, per_page={per_page}, conversion_only={conversion_only}")
         
         # Filter out recordings that have been converted
         # Get all recording IDs that have completed conversion jobs
@@ -408,6 +461,13 @@ def get_recordings():
         
         recordings_data = []
         for r in recordings.items:
+            # Get actual status based on file existence
+            actual_status = get_recording_status(r)
+            
+            # For conversion tab, only include convertible recordings
+            if conversion_only and not is_recording_convertible(r):
+                continue
+            
             streamer = Streamer.query.get(r.streamer_id)
             recordings_data.append({
                 'id': r.id,
@@ -416,7 +476,7 @@ def get_recordings():
                 'filename': r.filename,
                 'title': r.title,
                 'game': r.game,
-                'status': r.status,
+                'status': actual_status,  # Use actual status instead of DB status
                 'started_at': r.started_at.isoformat(),
                 'ended_at': r.ended_at.isoformat() if r.ended_at else None,
                 'file_size': r.file_size,
@@ -425,7 +485,7 @@ def get_recordings():
         
         response_data = {
             'recordings': recordings_data,
-            'total': recordings.total,
+            'total': len(recordings_data),  # Use actual count after filtering
             'pages': recordings.pages,
             'current_page': page
         }
@@ -629,6 +689,41 @@ def save_conversion_settings():
     
     return jsonify({'message': 'Settings saved successfully'})
 
+@app.route('/api/recordings/delete', methods=['POST'])
+def delete_recording():
+    """API endpoint to delete a recording file and mark as deleted in DB"""
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        
+        if not filename:
+            return jsonify({'error': 'Filename is required'}), 400
+        
+        # Find the recording by filename
+        recording = Recording.query.filter_by(filename=filename).first()
+        if not recording:
+            return jsonify({'error': 'Recording not found'}), 404
+        
+        # Delete the actual files
+        success, deleted_files = safe_delete_recording_file(filename)
+        
+        if success:
+            # Update recording status to deleted
+            recording.status = 'deleted'
+            db.session.commit()
+            
+            logger.info(f"Recording {filename} marked as deleted. Files removed: {deleted_files}")
+            return jsonify({
+                'message': 'Recording deleted successfully',
+                'deleted_files': deleted_files
+            })
+        else:
+            return jsonify({'error': 'Failed to delete recording files'}), 500
+            
+    except Exception as e:
+        logger.error(f"Error deleting recording: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/convert-recordings', methods=['POST'])
 def convert_recordings():
     """API endpoint to start conversion of recordings"""
@@ -637,6 +732,15 @@ def convert_recordings():
     schedule_type = data.get('schedule_type', 'scheduled')  # scheduled, daily, weekly, custom
     scheduled_time = data.get('scheduled_time')  # ISO format string
     custom_filename = data.get('custom_filename', '')  # Custom filename template
+    
+    # Validate that all recordings are convertible
+    for recording_id in recording_ids:
+        recording = Recording.query.get(recording_id)
+        if not recording:
+            return jsonify({'error': f'Recording {recording_id} not found'}), 404
+        
+        if not is_recording_convertible(recording):
+            return jsonify({'error': f'Recording {recording.filename} cannot be converted (not completed or deleted)'}), 400
     
     # Get global delete setting from conversion settings
     settings = ConversionSettings.query.first()
