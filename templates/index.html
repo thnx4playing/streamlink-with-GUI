@@ -198,38 +198,46 @@
              border: 1px solid #ced4da;
          }
          
-         /* List group for tabs */
-         .list-group-item {
-             border-radius: 0;
-             border: 1px solid #dee2e6;
-             border-bottom: none;
-         }
-         
-         .list-group-item:first-child {
-             border-top-left-radius: 0;
-             border-top-right-radius: 0;
-         }
-         
-         .list-group-item:last-child {
-             border-bottom-left-radius: 0;
-             border-bottom-right-radius: 0;
-             border-bottom: 1px solid #dee2e6;
-         }
-         
-         .list-group-item.active {
-             background-color: #007bff;
-             border-color: #007bff;
-             color: #ffffff;
-         }
-         
-                   .list-group-item:hover {
-              background-color: #e9ecef;
-              color: #495057;
+                   /* List group for tabs */
+          .list-group-item {
+              border-radius: 0;
+              border: 1px solid #dee2e6;
+              border-bottom: none;
+              color: #6c757d;
+              font-weight: 500;
+              padding: 0.5rem 1rem;
+              transition: all 0.2s ease;
+              border-bottom: 2px solid transparent;
+          }
+          
+          .list-group-item:first-child {
+              border-top-left-radius: 0;
+              border-top-right-radius: 0;
+          }
+          
+          .list-group-item:last-child {
+              border-bottom-left-radius: 0;
+              border-bottom-right-radius: 0;
+              border-bottom: 1px solid #dee2e6;
+          }
+          
+          .list-group-item.active {
+              background-color: #007bff;
+              border-color: #007bff;
+              color: #ffffff;
+              border-bottom-color: #007bff;
+          }
+          
+          .list-group-item:hover {
+              background-color: #f8f9fa;
+              color: #007bff;
+              border-bottom-color: #007bff;
           }
           
           .list-group-item.active:hover {
               background-color: #007bff;
               color: #ffffff;
+              border-bottom-color: #007bff;
           }
          
          /* Tab content */
