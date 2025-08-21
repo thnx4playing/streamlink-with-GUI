@@ -101,8 +101,9 @@
          .conversion-progress-table td:nth-child(1) {
              width: 20%;
              max-width: 200px;
-             word-wrap: break-word;
-             overflow-wrap: break-word;
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
          }
          
          .conversion-progress-table th:nth-child(2), /* Status */
@@ -115,8 +116,9 @@
          .conversion-progress-table td:nth-child(3) {
              width: 25%;
              max-width: 250px;
-             word-wrap: break-word;
-             overflow-wrap: break-word;
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
          }
          
          .conversion-progress-table th:nth-child(4), /* Schedule Type */
@@ -129,8 +131,9 @@
          .conversion-progress-table td:nth-child(5) {
              width: 25%;
              max-width: 250px;
-             word-wrap: break-word;
-             overflow-wrap: break-word;
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
          }
          
          .conversion-progress-table th:nth-child(6), /* Actions */
@@ -361,15 +364,25 @@
               border-bottom-color: #007bff;
           }
          
-         /* Tab content */
-         .tab-content {
-             border: 1px solid #dee2e6;
-             border-top: none;
-         }
-         
-         .tab-pane {
-             padding: 1.5rem;
-         }
+                   /* Tab content */
+          .tab-content {
+              border: 1px solid #dee2e6;
+              border-top: none;
+          }
+          
+          .tab-pane {
+              padding: 1.5rem;
+          }
+          
+          /* Conversion tab alignment fix */
+          #conversion-status-content {
+              padding-top: 0;
+          }
+          
+          /* Tooltip styling for table cells */
+          .conversion-progress-table td[title] {
+              cursor: help;
+          }
          
          /* Badge styling */
          .badge {
@@ -808,10 +821,10 @@
                          <!-- Right Content Area -->
              <div class="col-md-10">
                 <div class="tab-content" id="conversion-tab-content">
-                    <!-- Conversion Status Tab (Default) -->
-                    <div class="tab-pane fade show active" id="conversion-status-content" role="tabpanel">
-                        <!-- Recordings for Conversion Section -->
-                        <div class="card mb-4">
+                                         <!-- Conversion Status Tab (Default) -->
+                     <div class="tab-pane fade show active" id="conversion-status-content" role="tabpanel">
+                         <!-- Recordings for Conversion Section -->
+                         <div class="card mb-4" style="margin-top: 0;">
                             <div class="card-header d-flex justify-content-between align-items-center">
                                 <h5 class="mb-0">
                                     <i class="fas fa-film me-2"></i>Recordings for Conversion
@@ -997,21 +1010,27 @@
         let currentPage = 1;
         const perPage = 20;
 
-        // Initialize the application
-        document.addEventListener('DOMContentLoaded', function() {
-            loadStreamers();
-            loadRecentRecordings();
-            loadStatus();
-            loadActiveRecordings();
-            
-            // Auto-refresh every 30 seconds
-            setInterval(function() {
-                loadStreamers();
-                loadRecentRecordings();
-                loadStatus();
-                loadActiveRecordings();
-            }, 30000);
-        });
+                 // Initialize the application
+         document.addEventListener('DOMContentLoaded', function() {
+             loadStreamers();
+             loadRecentRecordings();
+             loadStatus();
+             loadActiveRecordings();
+             
+             // Initialize Bootstrap tooltips
+             var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+             var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+                 return new bootstrap.Tooltip(tooltipTriggerEl);
+             });
+             
+             // Auto-refresh every 30 seconds
+             setInterval(function() {
+                 loadStreamers();
+                 loadRecentRecordings();
+                 loadStatus();
+                 loadActiveRecordings();
+             }, 30000);
+         });
 
         // Load streamers with real-time status checking
         async function loadStreamers() {
@@ -1614,11 +1633,11 @@
                                            conversion.status === 'converting' ? 'bg-warning' : 'bg-secondary';
                          
                          row.innerHTML = `
-                             <td>${conversion.filename}</td>
+                             <td title="${conversion.filename}">${conversion.filename}</td>
                              <td><span class="badge ${statusClass}">${conversion.status.toUpperCase()}</span></td>
-                             <td>${conversion.progress || 'No progress info'}</td>
+                             <td title="${conversion.progress || 'No progress info'}">${conversion.progress || 'No progress info'}</td>
                              <td>${conversion.schedule_type || 'immediate'}</td>
-                             <td>${conversion.output_filename || '-'}</td>
+                             <td title="${conversion.output_filename || '-'}">${conversion.output_filename || '-'}</td>
                              <td>
                                  <div class="d-flex gap-1 justify-content-center">
                                      <button class="btn btn-sm btn-outline-danger" onclick="cancelConversionJob(${conversion.job_id})" 
