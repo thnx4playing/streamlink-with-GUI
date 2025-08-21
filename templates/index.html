@@ -394,21 +394,21 @@
                     </div>
                 </div>
             </div>
-            <div class="col-md-3">
-                <div class="card stats-card">
-                    <div class="card-body">
-                        <div class="d-flex justify-content-between">
-                            <div>
-                                <h6 class="card-title">Volume Path</h6>
-                                <div class="small" id="download-path" style="word-break: break-all;">./download</div>
-                            </div>
-                            <div class="align-self-center">
-                                <i class="fas fa-folder fa-2x"></i>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                         <div class="col-md-3">
+                 <div class="card stats-card">
+                     <div class="card-body">
+                         <div class="d-flex justify-content-between">
+                             <div>
+                                 <h6 class="card-title">Disk Space</h6>
+                                 <div class="small" id="disk-space" style="word-break: break-all;">Loading...</div>
+                             </div>
+                             <div class="align-self-center">
+                                 <i class="fas fa-hdd fa-2x"></i>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
         </div>
 
                          <!-- Main Content -->
@@ -941,20 +941,37 @@
             }
         }
 
-        // Load system status
-        async function loadStatus() {
-            try {
-                const response = await fetch('/api/status');
-                const status = await response.json();
-                
-                document.getElementById('active-streamers').textContent = status.active_streamers;
-                document.getElementById('total-recordings').textContent = status.total_recordings;
-                document.getElementById('recent-recordings').textContent = status.recent_recordings;
-                document.getElementById('download-path').textContent = status.download_path;
-            } catch (error) {
-                console.error('Error loading status:', error);
-            }
-        }
+                 // Load system status
+         async function loadStatus() {
+             try {
+                 const response = await fetch('/api/status');
+                 const status = await response.json();
+                 
+                 document.getElementById('active-streamers').textContent = status.active_streamers;
+                 document.getElementById('total-recordings').textContent = status.total_recordings;
+                 document.getElementById('recent-recordings').textContent = status.recent_recordings;
+                 
+                 // Load disk space information
+                 try {
+                     const diskResponse = await fetch('/api/disk-space');
+                     const diskData = await diskResponse.json();
+                     const usedGB = (diskData.used / (1024 * 1024 * 1024)).toFixed(1);
+                     const totalGB = (diskData.total / (1024 * 1024 * 1024)).toFixed(1);
+                     const availableGB = (diskData.available / (1024 * 1024 * 1024)).toFixed(1);
+                     const percentUsed = ((diskData.used / diskData.total) * 100).toFixed(1);
+                     
+                     document.getElementById('disk-space').innerHTML = `
+                         <div>${usedGB}GB / ${totalGB}GB used</div>
+                         <div class="text-muted">${availableGB}GB available</div>
+                         <div class="text-${percentUsed > 80 ? 'danger' : percentUsed > 60 ? 'warning' : 'success'}">${percentUsed}% used</div>
+                     `;
+                 } catch (diskError) {
+                     document.getElementById('disk-space').textContent = 'Disk info unavailable';
+                 }
+             } catch (error) {
+                 console.error('Error loading status:', error);
+             }
+         }
 
         // Show add streamer modal
         function showAddStreamerModal() {

@@ -451,6 +451,27 @@ def get_status():
         'download_path': os.getenv('DOWNLOAD_VOLUME_PATH', get_download_path())
     })
 
+@app.route('/api/disk-space')
+def get_disk_space():
+    """API endpoint to get disk space information"""
+    try:
+        import shutil
+        download_path = get_download_path()
+        
+        # Get disk usage for the download directory
+        total, used, free = shutil.disk_usage(download_path)
+        available = free
+        
+        return jsonify({
+            'total': total,
+            'used': used,
+            'available': available,
+            'path': download_path
+        })
+    except Exception as e:
+        logger.error(f"Error getting disk space: {e}")
+        return jsonify({'error': 'Failed to get disk space information'}), 500
+
 @app.route('/api/streamers/<int:streamer_id>/check')
 def check_streamer_status(streamer_id):
     """API endpoint to check current status of a specific streamer"""
