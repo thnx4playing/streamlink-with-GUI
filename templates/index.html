@@ -238,6 +238,19 @@
                 display: flex !important;
                 align-items: center !important;
                 height: 2rem !important;
+                padding: 0 1rem !important;
+            }
+            
+            /* Add spacing between brand and nav items */
+            .navbar-nav.me-auto {
+                margin-left: 2rem !important;
+            }
+            
+            /* Ensure all navbar elements are properly centered */
+            .navbar > .container-fluid > * {
+                display: flex !important;
+                align-items: center !important;
+                height: 2rem !important;
             }
           
           @keyframes pulse {
@@ -529,11 +542,25 @@
                                   <i class="fas fa-sync-alt refresh-btn"></i> Refresh
                               </button>
                           </div>
-                          <div class="card-body">
-                              <div id="active-recordings-list">
-                                  <!-- Active recordings will be loaded here -->
-                              </div>
-                          </div>
+                                                     <div class="card-body">
+                               <div class="table-responsive">
+                                   <table class="table table-hover">
+                                       <thead>
+                                           <tr>
+                                               <th>Streamer</th>
+                                               <th>Date</th>
+                                               <th>Stream Title</th>
+                                               <th>Duration</th>
+                                               <th>Status</th>
+                                               <th>Actions</th>
+                                           </tr>
+                                       </thead>
+                                       <tbody id="active-recordings-list">
+                                           <!-- Active recordings will be loaded here -->
+                                       </tbody>
+                                   </table>
+                               </div>
+                           </div>
                       </div>
                   </div>
 
@@ -548,11 +575,25 @@
                                   View All
                               </button>
                           </div>
-                          <div class="card-body">
-                              <div id="recent-recordings-list">
-                                  <!-- Recent recordings will be loaded here -->
-                              </div>
-                          </div>
+                                                     <div class="card-body">
+                               <div class="table-responsive">
+                                   <table class="table table-hover">
+                                       <thead>
+                                           <tr>
+                                               <th>Streamer</th>
+                                               <th>Date</th>
+                                               <th>Stream Title</th>
+                                               <th>Duration</th>
+                                               <th>Status</th>
+                                               <th>Actions</th>
+                                           </tr>
+                                       </thead>
+                                       <tbody id="recent-recordings-list">
+                                           <!-- Recent recordings will be loaded here -->
+                                       </tbody>
+                                   </table>
+                               </div>
+                           </div>
                       </div>
                   </div>
               </div>
@@ -983,51 +1024,85 @@
             }
         }
 
+        // Helper function to format date in Eastern Time
+        function formatDateEastern(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleString('en-US', {
+                timeZone: 'America/New_York',
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+
+        // Helper function to determine recording status
+        function getRecordingStatus(recording) {
+            if (recording.filename && recording.filename.endsWith('.part')) {
+                return 'Failed/Stopped';
+            }
+            return recording.status || 'Unknown';
+        }
+
+        // Helper function to get status badge class
+        function getStatusBadgeClass(status) {
+            switch (status.toLowerCase()) {
+                case 'completed':
+                    return 'bg-success';
+                case 'failed/stopped':
+                    return 'bg-danger';
+                case 'recording':
+                    return 'bg-warning';
+                default:
+                    return 'bg-secondary';
+            }
+        }
+
         // Load recent recordings
         async function loadRecentRecordings() {
             try {
                 const response = await fetch('/api/recordings?per_page=5');
                 const data = await response.json();
                 
-                const container = document.getElementById('recent-recordings-list');
+                const tbody = document.getElementById('recent-recordings-list');
                 
                 // Only show the first 5 recordings
                 const recentRecordings = data.recordings.slice(0, 5);
                 
                 if (recentRecordings.length === 0) {
-                    if (container.children.length === 0 || container.children[0].textContent !== 'No recordings found') {
-                        container.innerHTML = '<div class="text-center text-muted">No recordings found</div>';
-                    }
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No recordings found</td></tr>';
                     return;
                 }
                 
-                // Update existing recordings or create new ones
-                recentRecordings.forEach((recording, index) => {
-                    let div = container.children[index];
-                    
-                    // If div doesn't exist, create it
-                    if (!div) {
-                        div = document.createElement('div');
-                        div.className = 'd-flex justify-content-between align-items-center mb-2 p-2 border rounded';
-                        container.appendChild(div);
-                    }
-                    
-                    // Update div content
-                    div.innerHTML = `
-                        <div>
-                            <div class="fw-bold">${recording.filename}</div>
-                            <small class="text-muted">${recording.title || 'No title'}</small>
-                        </div>
-                        <span class="badge status-${recording.status}">${recording.status}</span>
-                    `;
-                });
+                tbody.innerHTML = '';
                 
-                // Remove any extra recordings that shouldn't be there
-                while (container.children.length > recentRecordings.length) {
-                    container.removeChild(container.lastChild);
-                }
+                recentRecordings.forEach((recording) => {
+                    const row = document.createElement('tr');
+                    const status = getRecordingStatus(recording);
+                    const statusClass = getStatusBadgeClass(status);
+                    const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                    const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
+                    
+                    row.innerHTML = `
+                        <td>${streamerName}</td>
+                        <td>${formatDateEastern(recording.started_at)}</td>
+                        <td>${recording.title || 'No title'}</td>
+                        <td>${duration}</td>
+                        <td><span class="badge ${statusClass}">${status}</span></td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteRecording('${recording.filename}')" title="Delete recording">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
             } catch (error) {
                 console.error('Error loading recent recordings:', error);
+                const tbody = document.getElementById('recent-recordings-list');
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Error loading recordings</td></tr>';
             }
         }
 
@@ -1198,14 +1273,17 @@
                     const row = document.createElement('tr');
                     const duration = recording.duration ? formatDuration(recording.duration) : '-';
                     const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
+                    const status = getRecordingStatus(recording);
+                    const statusClass = getStatusBadgeClass(status);
+                    const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                     
                     row.innerHTML = `
-                        <td>${recording.streamer_id}</td>
+                        <td>${streamerName}</td>
                         <td>${recording.title || 'No title'}</td>
                         <td>
-                            <span class="badge status-${recording.status}">${recording.status}</span>
+                            <span class="badge ${statusClass}">${status}</span>
                         </td>
-                        <td>${new Date(recording.started_at).toLocaleString()}</td>
+                        <td>${formatDateEastern(recording.started_at)}</td>
                         <td>${duration}</td>
                         <td>${fileSize}</td>
                     `;
@@ -1333,49 +1411,38 @@
                 const response = await fetch('/api/active-recordings');
                 const data = await response.json();
                 
-                const container = document.getElementById('active-recordings-list');
+                const tbody = document.getElementById('active-recordings-list');
                 
                 if (data.recordings.length === 0) {
-                    if (container.children.length === 0 || container.children[0].textContent !== 'No active recordings') {
-                        container.innerHTML = '<div class="text-center text-muted">No active recordings</div>';
-                    }
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No active recordings</td></tr>';
                     return;
                 }
                 
-                // Update existing recordings or create new ones
-                data.recordings.forEach((recording, index) => {
-                    let div = container.children[index];
-                    
-                    // If div doesn't exist, create it
-                    if (!div) {
-                        div = document.createElement('div');
-                        div.className = 'd-flex justify-content-between align-items-center mb-2 p-3 border rounded bg-light';
-                        container.appendChild(div);
-                    }
-                    
-                    // Update div content
-                    div.innerHTML = `
-                        <div>
-                            <div class="fw-bold">${recording.streamer_name}</div>
-                            <div class="text-muted">${recording.title || 'No title'}</div>
-                            <small class="text-info">Game: ${recording.game || 'Unknown'}</small>
-                        </div>
-                        <div class="text-end">
-                            <span class="badge bg-warning">RECORDING</span>
-                            <div class="small text-muted">Started: ${new Date(recording.started_at).toLocaleTimeString()}</div>
-                            <button class="btn btn-sm btn-danger mt-1" onclick="stopRecording(${recording.id})">
-                                <i class="fas fa-stop me-1"></i>Stop
-                            </button>
-                        </div>
-                    `;
-                });
+                tbody.innerHTML = '';
                 
-                // Remove any extra recordings that shouldn't be there
-                while (container.children.length > data.recordings.length) {
-                    container.removeChild(container.lastChild);
-                }
+                data.recordings.forEach((recording) => {
+                    const row = document.createElement('tr');
+                    const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                    const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
+                    
+                    row.innerHTML = `
+                        <td>${streamerName}</td>
+                        <td>${formatDateEastern(recording.started_at)}</td>
+                        <td>${recording.title || 'No title'}</td>
+                        <td>${duration}</td>
+                        <td><span class="badge bg-warning">RECORDING</span></td>
+                        <td>
+                            <button class="btn btn-sm btn-danger" onclick="stopRecording(${recording.id})" title="Stop recording">
+                                <i class="fas fa-stop"></i>
+                            </button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
             } catch (error) {
                 console.error('Error loading active recordings:', error);
+                const tbody = document.getElementById('active-recordings-list');
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Error loading recordings</td></tr>';
             }
         }
 
@@ -1403,6 +1470,36 @@
                 } catch (error) {
                     console.error('Error stopping recording:', error);
                     alert('Error stopping recording');
+                }
+            }
+        }
+
+        // Delete recording
+        async function deleteRecording(filename) {
+            if (confirm('Are you sure you want to delete this recording file?')) {
+                try {
+                    const response = await fetch(`/api/recordings/delete`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ filename: filename })
+                    });
+                    
+                    if (response.ok) {
+                        loadRecentRecordings();
+                        loadStatus();
+                        // Also refresh conversion recordings if on conversion tab
+                        if (document.getElementById('conversion-tab').style.display !== 'none') {
+                            loadRecordingsForConversion();
+                        }
+                    } else {
+                        const error = await response.json();
+                        alert('Error: ' + error.error);
+                    }
+                } catch (error) {
+                    console.error('Error deleting recording:', error);
+                    alert('Error deleting recording');
                 }
             }
         }
@@ -1630,11 +1727,26 @@
                 
                 if (data.recordings && data.recordings.length > 0) {
                     console.log(`Found ${data.recordings.length} recordings, processing...`);
-                    data.recordings.forEach((recording, index) => {
+                    
+                    // Filter out .part files (failed/stopped recordings)
+                    const validRecordings = data.recordings.filter(recording => 
+                        !recording.filename || !recording.filename.endsWith('.part')
+                    );
+                    
+                    console.log(`Found ${validRecordings.length} valid recordings for conversion`);
+                    
+                    if (validRecordings.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No completed recordings found for conversion</td></tr>';
+                        return;
+                    }
+                    
+                    validRecordings.forEach((recording, index) => {
                         console.log(`Processing recording ${index + 1}:`, recording);
                         const row = document.createElement('tr');
                         const duration = recording.duration ? formatDuration(recording.duration) : '-';
                         const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
+                        const status = getRecordingStatus(recording);
+                        const statusClass = getStatusBadgeClass(status);
                         
                         row.innerHTML = `
                             <td>
@@ -1643,9 +1755,9 @@
                             <td>${recording.streamer_name || recording.streamer_id}</td>
                             <td>${recording.title || 'No title'}</td>
                             <td>
-                                <span class="badge status-${recording.status}">${recording.status}</span>
+                                <span class="badge ${statusClass}">${status}</span>
                             </td>
-                            <td>${new Date(recording.started_at).toLocaleString()}</td>
+                            <td>${formatDateEastern(recording.started_at)}</td>
                             <td>${duration}</td>
                             <td>${fileSize}</td>
                             <td>
