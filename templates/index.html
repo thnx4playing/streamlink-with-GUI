@@ -131,50 +131,53 @@
          
                    /* Navigation styling */
           .navbar {
-              background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-              border-bottom: 3px solid #1abc9c;
-              box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-              padding: 0.5rem 0;
+              background: #1a1a1a;
+              border-bottom: 1px solid #333;
+              padding: 0.75rem 0;
+              box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
           }
           
           .navbar-brand {
-              font-weight: 700;
+              font-weight: 600;
               color: #ffffff !important;
-              font-size: 1.25rem;
-              text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+              font-size: 1.1rem;
+              letter-spacing: 0.5px;
           }
           
           .navbar-brand .fas {
-              color: #1abc9c;
+              color: #00d4aa;
               margin-right: 0.5rem;
           }
           
           .nav-link {
-              color: #ecf0f1 !important;
+              color: #b0b0b0 !important;
               font-weight: 500;
               padding: 0.5rem 1rem !important;
-              border-radius: 4px;
               margin: 0 0.25rem;
-              transition: all 0.2s ease;
+              transition: color 0.2s ease;
+              border-bottom: 2px solid transparent;
           }
           
           .nav-link:hover, .nav-link.active {
               color: #ffffff !important;
-              background-color: rgba(26, 188, 156, 0.2);
-              transform: translateY(-1px);
+              border-bottom-color: #00d4aa;
           }
           
           .navbar-text {
-              color: #ecf0f1 !important;
+              color: #00d4aa !important;
               font-weight: 500;
-              padding: 0.5rem 1rem;
-              background-color: rgba(46, 204, 113, 0.2);
-              border-radius: 4px;
-              border: 1px solid rgba(46, 204, 113, 0.3);
+              font-size: 0.875rem;
           }
           
           .navbar-text .fas {
-              color: #2ecc71;
+              color: #00d4aa;
+              animation: pulse 2s infinite;
+          }
+          
+          @keyframes pulse {
+              0% { opacity: 1; }
+              50% { opacity: 0.5; }
+              100% { opacity: 1; }
           }
          
          /* Form controls */
@@ -392,85 +395,87 @@
             </div>
         </div>
 
-            <!-- Main Content -->
-            <div class="row">
-                <!-- Active Recordings -->
-                <div class="col-12 mb-4">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0">
-                                <i class="fas fa-broadcast-tower me-2"></i>Active Recordings
-                            </h5>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="refreshActiveRecordings()">
-                                <i class="fas fa-sync-alt refresh-btn"></i> Refresh
-                            </button>
-                        </div>
-                        <div class="card-body">
-                            <div id="active-recordings-list">
-                                <!-- Active recordings will be loaded here -->
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                         <!-- Main Content -->
+             <div class="row">
+                 <!-- Active Recordings -->
+                 <div class="col-lg-6 mb-4">
+                     <div class="card">
+                         <div class="card-header d-flex justify-content-between align-items-center">
+                             <h5 class="mb-0">
+                                 <i class="fas fa-broadcast-tower me-2"></i>Active Recordings
+                             </h5>
+                             <button class="btn btn-sm btn-outline-secondary" onclick="refreshActiveRecordings()">
+                                 <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                             </button>
+                         </div>
+                         <div class="card-body">
+                             <div id="active-recordings-list">
+                                 <!-- Active recordings will be loaded here -->
+                             </div>
+                         </div>
+                     </div>
+                 </div>
 
-                <!-- Streamers Management -->
-                <div class="col-lg-8">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">
-                            <i class="fas fa-users me-2"></i>Streamers Management
-                        </h5>
-                        <div>
-                            <button class="btn btn-sm btn-outline-secondary me-2" onclick="refreshStatus()">
-                                <i class="fas fa-sync-alt refresh-btn"></i> Refresh Status
-                            </button>
-                            <button class="btn btn-sm btn-primary" onclick="showAddStreamerModal()">
-                                <i class="fas fa-plus me-1"></i>Add Streamer
-                            </button>
-                        </div>
-                    </div>
-                    <div class="card-body">
-                        <div class="table-responsive">
-                            <table class="table table-hover">
-                                <thead>
-                                                                         <tr>
-                                         <th>Display Name</th>
-                                         <th>Twitch Name</th>
-                                         <th>Status</th>
-                                         <th>Quality</th>
-                                         <th>Timer (s)</th>
-                                         <th>Active</th>
-                                         <th>Actions</th>
-                                     </tr>
-                                </thead>
-                                <tbody id="streamers-table">
-                                    <!-- Streamers will be loaded here -->
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
+                 <!-- Recent Recordings -->
+                 <div class="col-lg-6 mb-4">
+                     <div class="card">
+                         <div class="card-header d-flex justify-content-between align-items-center">
+                             <h5 class="mb-0">
+                                 <i class="fas fa-history me-2"></i>Recent Recordings
+                             </h5>
+                             <button class="btn btn-sm btn-outline-primary" onclick="showRecordingsModal()">
+                                 View All
+                             </button>
+                         </div>
+                         <div class="card-body">
+                             <div id="recent-recordings-list">
+                                 <!-- Recent recordings will be loaded here -->
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
 
-            <!-- Recent Recordings -->
-            <div class="col-lg-4">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="mb-0">
-                            <i class="fas fa-history me-2"></i>Recent Recordings
-                        </h5>
-                        <button class="btn btn-sm btn-outline-primary" onclick="showRecordingsModal()">
-                            View All
-                        </button>
-                    </div>
-                    <div class="card-body">
-                        <div id="recent-recordings-list">
-                            <!-- Recent recordings will be loaded here -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+             <!-- Streamers Management -->
+             <div class="row">
+                 <div class="col-12">
+                     <div class="card">
+                         <div class="card-header d-flex justify-content-between align-items-center">
+                             <h5 class="mb-0">
+                                 <i class="fas fa-users me-2"></i>Streamers Management
+                             </h5>
+                             <div>
+                                 <button class="btn btn-sm btn-outline-secondary me-2" onclick="refreshStatus()">
+                                     <i class="fas fa-sync-alt refresh-btn"></i> Refresh Status
+                                 </button>
+                                 <button class="btn btn-sm btn-primary" onclick="showAddStreamerModal()">
+                                     <i class="fas fa-plus me-1"></i>Add Streamer
+                                 </button>
+                             </div>
+                         </div>
+                         <div class="card-body">
+                             <div class="table-responsive">
+                                 <table class="table table-hover">
+                                     <thead>
+                                         <tr>
+                                             <th>Display Name</th>
+                                             <th>Twitch Name</th>
+                                             <th>Status</th>
+                                             <th>Quality</th>
+                                             <th>Timer (s)</th>
+                                             <th>Active</th>
+                                             <th>Actions</th>
+                                         </tr>
+                                     </thead>
+                                     <tbody id="streamers-table">
+                                         <!-- Streamers will be loaded here -->
+                                     </tbody>
+                                 </table>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
+             </div>
     </div>
 
     <!-- Add Streamer Modal -->
