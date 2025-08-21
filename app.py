@@ -8,7 +8,7 @@ import threading
 import time
 import logging
 from datetime import datetime, timedelta
-from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -320,10 +320,42 @@ def index():
                          recordings=recordings,
                          streamer_status=streamer_status)
 
+@app.route('/favicon.ico')
+def favicon_ico():
+    """Serve favicon.ico (browser default)"""
+    logger.info("Favicon.ico requested")
+    try:
+        return send_from_directory('.', 'favicon-new.png')
+    except Exception as e:
+        logger.error(f"Error serving favicon.ico: {e}")
+        return '', 404
+
 @app.route('/favicon-new.png')
 def favicon():
     """Serve favicon"""
-    return send_from_directory('.', 'favicon-new.png')
+    logger.info("Favicon-new.png requested")
+    try:
+        # Check if file exists
+        import os
+        favicon_path = os.path.join('.', 'favicon-new.png')
+        logger.info(f"Favicon path: {favicon_path}")
+        logger.info(f"File exists: {os.path.exists(favicon_path)}")
+        return send_from_directory('.', 'favicon-new.png')
+    except Exception as e:
+        logger.error(f"Error serving favicon-new.png: {e}")
+        return '', 404
+
+@app.route('/test-favicon')
+def test_favicon():
+    """Test route to check favicon file"""
+    import os
+    favicon_path = os.path.join('.', 'favicon-new.png')
+    return jsonify({
+        'favicon_path': favicon_path,
+        'file_exists': os.path.exists(favicon_path),
+        'current_dir': os.getcwd(),
+        'files_in_dir': os.listdir('.')
+    })
 
 @app.route('/api/streamers', methods=['GET'])
 def get_streamers():

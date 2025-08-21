@@ -17,6 +17,7 @@ COPY twitch_manager.py .
 COPY streamlink_manager.py .
 COPY notification_manager.py .
 COPY templates/ ./templates/
+COPY favicon-new.png .
 
 # Create required directories
 RUN mkdir -p /app/download /app/data /app/config
