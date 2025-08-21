@@ -414,160 +414,174 @@
 
     <!-- Conversion Tab -->
     <div id="conversion-tab" style="display: none;">
-        <!-- Top Row: Settings and Options -->
-        <div class="row mb-4">
-            <!-- Conversion Settings - Left Half -->
-            <div class="col-lg-6">
-                <div class="card h-100">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">
-                            <i class="fas fa-cog me-2"></i>Conversion Settings
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <form id="conversion-settings-form">
-                            <div class="mb-3">
-                                <label class="form-label fw-bold">Input Directory</label>
-                                <div class="form-control-plaintext" id="conversion-volume-path-display">Loading...</div>
-                                <small class="form-text text-muted">Directory containing TS files to convert</small>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label fw-bold">Output Directory</label>
-                                <div class="form-control-plaintext" id="output-volume-path-display">Loading...</div>
-                                <small class="form-text text-muted">Directory for converted MP4 files</small>
-                            </div>
-                            <div class="mb-3">
-                                <label for="custom-filename-template" class="form-label fw-bold">File Naming Scheme</label>
-                                <input type="text" class="form-control" id="custom-filename-template" placeholder="{streamer}_{date}_{title}">
-                                <small class="form-text text-muted">Use variables: {streamer}, {twitch_name}, {title}, {date}, {time}, {datetime}, {game}</small>
-                            </div>
-                            <div class="mb-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="delete-original-after-conversion">
-                                    <label class="form-check-label" for="delete-original-after-conversion">
-                                        Delete original TS files after successful conversion
-                                    </label>
-                                </div>
-                            </div>
-                            <button type="button" class="btn btn-primary" onclick="saveConversionSettings()">
-                                <i class="fas fa-save me-1"></i>Save Settings
-                            </button>
-                        </form>
-                    </div>
+        <div class="row">
+            <!-- Left Sidebar with Tabs -->
+            <div class="col-md-3">
+                <div class="list-group" id="conversion-tabs" role="tablist">
+                    <a class="list-group-item list-group-item-action active" id="conversion-status-tab" data-bs-toggle="list" href="#conversion-status-content" role="tab">
+                        <i class="fas fa-tasks me-2"></i>Conversion Status
+                    </a>
+                    <a class="list-group-item list-group-item-action" id="conversion-settings-tab" data-bs-toggle="list" href="#conversion-settings-content" role="tab">
+                        <i class="fas fa-cog me-2"></i>Conversion Settings
+                    </a>
+                    <a class="list-group-item list-group-item-action" id="scheduled-conversions-tab" data-bs-toggle="list" href="#scheduled-conversions-content" role="tab">
+                        <i class="fas fa-clock me-2"></i>Scheduled Conversions
+                    </a>
                 </div>
             </div>
 
-            <!-- Conversion Options - Right Half -->
-            <div class="col-lg-6">
-                <div class="card h-100">
-                    <div class="card-header bg-primary text-white">
-                        <h5 class="mb-0">
-                            <i class="fas fa-clock me-2"></i>Conversion Options
-                        </h5>
-                    </div>
-                    <div class="card-body">
-                        <div class="mb-3">
-                            <label for="schedule-type" class="form-label fw-bold">Schedule Type</label>
-                            <select class="form-select" id="schedule-type" onchange="toggleScheduleOptions()">
-                                <option value="scheduled">Scheduled</option>
-                                <option value="daily">Daily</option>
-                                <option value="weekly">Weekly</option>
-                            </select>
-                        </div>
-                        <div class="mb-3" id="scheduled-time-group">
-                            <label for="scheduled-time" class="form-label fw-bold">Scheduled Time</label>
-                            <input type="datetime-local" class="form-control" id="scheduled-time">
-                        </div>
-                        <div class="mb-3">
-                            <label for="conversion-custom-filename" class="form-label fw-bold">Custom Filename (Optional)</label>
-                            <input type="text" class="form-control" id="conversion-custom-filename" placeholder="Override filename template">
+            <!-- Right Content Area -->
+            <div class="col-md-9">
+                <div class="tab-content" id="conversion-tab-content">
+                    <!-- Conversion Status Tab (Default) -->
+                    <div class="tab-pane fade show active" id="conversion-status-content" role="tabpanel">
+                        <!-- Recordings for Conversion Section -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-film me-2"></i>Recordings for Conversion
+                                </h5>
+                                <div>
+                                    <button class="btn btn-sm btn-outline-light me-2" onclick="refreshRecordingsForConversion()">
+                                        <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                                    </button>
+                                    <button class="btn btn-sm btn-light" onclick="convertSelectedRecordings()" id="convert-btn" disabled>
+                                        <i class="fas fa-cog me-1"></i>Convert Selected
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>
+                                                    <input type="checkbox" id="select-all-recordings" onchange="toggleAllRecordings()">
+                                                </th>
+                                                <th>Streamer</th>
+                                                <th>Title</th>
+                                                <th>Status</th>
+                                                <th>Started</th>
+                                                <th>Duration</th>
+                                                <th>File Size</th>
+                                                <th>Conversion Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="conversion-recordings-table">
+                                            <!-- Recordings for conversion will be loaded here -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
 
-                        
-                        <button type="button" class="btn btn-primary" onclick="saveConversionOptions()">
-                            <i class="fas fa-save me-1"></i>Save Options
-                        </button>
-                        
-                        <!-- Scheduled Tasks Display -->
-                        <div class="mt-4">
-                            <h6 class="fw-bold text-muted">Scheduled Tasks</h6>
-                            <div id="scheduled-tasks-list" class="border rounded p-3 bg-light">
-                                <div class="text-center text-muted">No scheduled tasks</div>
+                        <!-- Conversion Progress Section -->
+                        <div class="card">
+                            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-tasks me-2"></i>Conversion Progress
+                                </h5>
+                                <button class="btn btn-sm btn-outline-light" onclick="refreshConversionProgress()">
+                                    <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                                </button>
+                            </div>
+                            <div class="card-body">
+                                <div id="conversion-progress-list">
+                                    <!-- Conversion progress will be shown here -->
+                                </div>
+                                <nav>
+                                    <ul class="pagination justify-content-center" id="conversion-progress-pagination">
+                                        <!-- Pagination will be generated here -->
+                                    </ul>
+                                </nav>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Conversion Settings Tab -->
+                    <div class="tab-pane fade" id="conversion-settings-content" role="tabpanel">
+                        <div class="card">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-cog me-2"></i>Conversion Settings
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <form id="conversion-settings-form">
+                                    <div class="mb-3">
+                                        <label class="form-label fw-bold">Input Directory</label>
+                                        <div class="form-control-plaintext" id="conversion-volume-path-display">Loading...</div>
+                                        <small class="form-text text-muted">Directory containing TS files to convert</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label fw-bold">Output Directory</label>
+                                        <div class="form-control-plaintext" id="output-volume-path-display">Loading...</div>
+                                        <small class="form-text text-muted">Directory for converted MP4 files</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="custom-filename-template" class="form-label fw-bold">File Naming Scheme</label>
+                                        <input type="text" class="form-control" id="custom-filename-template" placeholder="{streamer}_{date}_{title}">
+                                        <small class="form-text text-muted">Use variables: {streamer}, {twitch_name}, {title}, {date}, {time}, {datetime}, {game}</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <div class="form-check">
+                                            <input class="form-check-input" type="checkbox" id="delete-original-after-conversion">
+                                            <label class="form-check-label" for="delete-original-after-conversion">
+                                                Delete original TS files after successful conversion
+                                            </label>
+                                        </div>
+                                    </div>
+                                    <button type="button" class="btn btn-primary" onclick="saveConversionSettings()">
+                                        <i class="fas fa-save me-1"></i>Save Settings
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Scheduled Conversions Tab -->
+                    <div class="tab-pane fade" id="scheduled-conversions-content" role="tabpanel">
+                        <div class="card">
+                            <div class="card-header bg-primary text-white">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>Scheduled Conversions
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="schedule-type" class="form-label fw-bold">Schedule Type</label>
+                                    <select class="form-select" id="schedule-type" onchange="toggleScheduleOptions()">
+                                        <option value="scheduled">Scheduled</option>
+                                        <option value="daily">Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3" id="scheduled-time-group">
+                                    <label for="scheduled-time" class="form-label fw-bold">Scheduled Time</label>
+                                    <input type="datetime-local" class="form-control" id="scheduled-time">
+                                </div>
+                                <div class="mb-3">
+                                    <label for="conversion-custom-filename" class="form-label fw-bold">Custom Filename (Optional)</label>
+                                    <input type="text" class="form-control" id="conversion-custom-filename" placeholder="Override filename template">
+                                </div>
+                                
+                                <button type="button" class="btn btn-primary" onclick="saveConversionOptions()">
+                                    <i class="fas fa-save me-1"></i>Save Options
+                                </button>
+                                
+                                <!-- Scheduled Tasks Display -->
+                                <div class="mt-4">
+                                    <h6 class="fw-bold text-muted">Scheduled Tasks</h6>
+                                    <div id="scheduled-tasks-list" class="border rounded p-3 bg-light">
+                                        <div class="text-center text-muted">No scheduled tasks</div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-
-            <div class="row mt-4">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0">
-                                <i class="fas fa-film me-2"></i>Recordings for Conversion
-                            </h5>
-                            <div>
-                                <button class="btn btn-sm btn-outline-dark me-2" onclick="refreshRecordingsForConversion()">
-                                    <i class="fas fa-sync-alt refresh-btn"></i> Refresh
-                                </button>
-                                <button class="btn btn-sm btn-primary" onclick="convertSelectedRecordings()" id="convert-btn" disabled>
-                                    <i class="fas fa-cog me-1"></i>Convert Selected
-                                </button>
-                            </div>
-                        </div>
-                        <div class="card-body">
-                            <div class="table-responsive">
-                                <table class="table table-hover">
-                                    <thead>
-                                        <tr>
-                                            <th>
-                                                <input type="checkbox" id="select-all-recordings" onchange="toggleAllRecordings()">
-                                            </th>
-                                            <th>Streamer</th>
-                                            <th>Title</th>
-                                            <th>Status</th>
-                                            <th>Started</th>
-                                            <th>Duration</th>
-                                            <th>File Size</th>
-                                            <th>Conversion Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="conversion-recordings-table">
-                                        <!-- Recordings for conversion will be loaded here -->
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Conversion Progress Section -->
-            <div class="row mt-4">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0">
-                                <i class="fas fa-tasks me-2"></i>Conversion Progress
-                            </h5>
-                            <button class="btn btn-sm btn-outline-light" onclick="refreshConversionProgress()">
-                                <i class="fas fa-sync-alt refresh-btn"></i> Refresh
-                            </button>
-                        </div>
-                                                 <div class="card-body">
-                             <div id="conversion-progress-list">
-                                 <!-- Conversion progress will be shown here -->
-                             </div>
-                             <nav>
-                                 <ul class="pagination justify-content-center" id="conversion-progress-pagination">
-                                     <!-- Pagination will be generated here -->
-                                 </ul>
-                             </nav>
-                         </div>
-                    </div>
-                </div>
-            </div>
 
             <!-- Conversion Progress Modal -->
             <div class="modal fade" id="conversionProgressModal" tabindex="-1">
@@ -949,11 +963,28 @@
             // Load tab-specific data
             if (tabName === 'conversion') {
                 console.log('Loading conversion tab data...');
+                // Load all conversion data since we have internal tabs
                 loadRecordingsForConversion();
                 loadConversionSettings();
                 loadConversionOptions();
                 refreshConversionProgress();
                 loadScheduledTasks();
+                
+                // Set the default tab to Conversion Status
+                const conversionStatusTab = document.getElementById('conversion-status-tab');
+                const conversionStatusContent = document.getElementById('conversion-status-content');
+                
+                // Remove active class from all conversion tabs
+                document.querySelectorAll('#conversion-tabs .list-group-item').forEach(tab => {
+                    tab.classList.remove('active');
+                });
+                document.querySelectorAll('#conversion-tab-content .tab-pane').forEach(content => {
+                    content.classList.remove('show', 'active');
+                });
+                
+                // Activate Conversion Status tab
+                conversionStatusTab.classList.add('active');
+                conversionStatusContent.classList.add('show', 'active');
             } else if (tabName === 'dashboard') {
                 console.log('Loading dashboard tab data...');
                 loadStreamers();
@@ -1573,6 +1604,35 @@
                 }
             }, 2000);
         }
+
+        // Initialize conversion tab event listeners
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add event listeners for internal conversion tabs
+            const conversionTabs = document.querySelectorAll('#conversion-tabs .list-group-item');
+            conversionTabs.forEach(tab => {
+                tab.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    
+                    // Remove active class from all tabs
+                    conversionTabs.forEach(t => t.classList.remove('active'));
+                    
+                    // Add active class to clicked tab
+                    this.classList.add('active');
+                    
+                    // Hide all tab content
+                    document.querySelectorAll('#conversion-tab-content .tab-pane').forEach(content => {
+                        content.classList.remove('show', 'active');
+                    });
+                    
+                    // Show corresponding content
+                    const targetId = this.getAttribute('href').substring(1);
+                    const targetContent = document.getElementById(targetId);
+                    if (targetContent) {
+                        targetContent.classList.add('show', 'active');
+                    }
+                });
+            });
+        });
 
 
     </script>
