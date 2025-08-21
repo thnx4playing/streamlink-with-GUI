@@ -142,6 +142,8 @@
                max-height: 2rem !important;
                height: 2rem !important;
                line-height: 1 !important;
+               display: flex !important;
+               align-items: center !important;
            }
           
                                 .navbar-brand {
@@ -155,6 +157,9 @@
                display: flex !important;
                align-items: center !important;
                height: 2rem !important;
+               vertical-align: middle !important;
+               position: relative !important;
+               top: 0 !important;
            }
           
           .navbar-brand .fas {
@@ -189,6 +194,9 @@
                display: flex !important;
                align-items: center !important;
                height: 2rem !important;
+               vertical-align: middle !important;
+               position: relative !important;
+               top: 0 !important;
            }
           
                      .navbar-text .fas {
@@ -196,30 +204,41 @@
                animation: pulse 2s infinite;
            }
            
-           /* Override Bootstrap navbar height */
-           .navbar-expand-lg {
-               min-height: 2rem !important;
-               max-height: 2rem !important;
-               height: 2rem !important;
-           }
-           
-           .navbar-nav {
-               align-items: center !important;
-               height: 2rem !important;
-           }
-           
-           .navbar-nav .nav-item {
-               height: 2rem !important;
-               display: flex !important;
-               align-items: center !important;
-           }
-           
-           .navbar-nav .nav-link {
-               height: 2rem !important;
-               display: flex !important;
-               align-items: center !important;
-               justify-content: center !important;
-           }
+                       /* Override Bootstrap navbar height */
+            .navbar-expand-lg {
+                min-height: 2rem !important;
+                max-height: 2rem !important;
+                height: 2rem !important;
+                display: flex !important;
+                align-items: center !important;
+            }
+            
+            .navbar-nav {
+                align-items: center !important;
+                height: 2rem !important;
+                display: flex !important;
+            }
+            
+            .navbar-nav .nav-item {
+                height: 2rem !important;
+                display: flex !important;
+                align-items: center !important;
+            }
+            
+            .navbar-nav .nav-link {
+                height: 2rem !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                vertical-align: middle !important;
+            }
+            
+            /* Ensure container-fluid also uses flexbox */
+            .navbar .container-fluid {
+                display: flex !important;
+                align-items: center !important;
+                height: 2rem !important;
+            }
           
           @keyframes pulse {
               0% { opacity: 1; }
