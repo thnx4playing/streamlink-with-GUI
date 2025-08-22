@@ -18,18 +18,18 @@ from notification_manager import NotificationManager
 # Load environment variables
 load_dotenv()
 
-# Configure logging with rotation
+# Configure logging to file and stdout
 log_dir = '/app/logs'
 os.makedirs(log_dir, exist_ok=True)
 logger = logging.getLogger("streamlink-webgui")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
+    _fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(threadName)s %(name)s: %(message)s")
     fh = RotatingFileHandler(f"{log_dir}/app.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
-    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(threadName)s %(name)s: %(message)s")
-    fh.setFormatter(fmt)
+    fh.setFormatter(_fmt)
+    sh = logging.StreamHandler()
+    sh.setFormatter(_fmt)
     logger.addHandler(fh)
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setFormatter(fmt)
     logger.addHandler(sh)
 
 # Initialize Flask app
@@ -132,6 +132,8 @@ class AppConfig:
 # Global variables for managing recording processes
 recording_processes = {}
 recording_threads = {}
+# Track per-recording stop flags for cooperative cancellation and per-recording PIDs
+recording_stop_flags = {}  # {recording_id: threading.Event()}
 recording_procinfo = {}   # {recording_id: {"pid": int, "proc": Popen, "stop_flag": threading.Event}}
 active_by_streamer = {}   # {streamer_id: recording_id}
 
@@ -359,26 +361,57 @@ def record_stream(streamer_id):
                     
                     # Start recording
                     try:
-                        streamlink_manager.run_streamlink(config.user, recorded_filename)
-                        
-                        # Update recording status based on actual file existence
+                        # per-recording logger file
+                        os.makedirs(log_dir, exist_ok=True)
+                        rec_log_path = f"{log_dir}/recording_{recording.id}.log"
+                        _fmt = logging.Formatter("%(asctime)s [%(levelname)s] rec-%(name)s: %(message)s")
+                        fh = logging.FileHandler(rec_log_path, encoding="utf-8")
+                        fh.setFormatter(_fmt)
+                        rec_logger = logging.getLogger(f"rec.{recording.id}")
+                        rec_logger.setLevel(logging.INFO)
+                        rec_logger.addHandler(fh)
+                        # also pipe streamlink's own logs
+                        sl_logger = logging.getLogger("streamlink")
+                        sl_logger.setLevel(logging.INFO)
+                        sl_logger.addHandler(fh)
+                        rec_logger.info(f"Begin recording streamer={config.user} id={recording.id} file={recorded_filename}")
+
+                        # cooperative stop flag
+                        stop_event = threading.Event()
+                        recording_stop_flags[recording.id] = stop_event
+
+                        result = streamlink_manager.run_streamlink(
+                            config.user, recorded_filename, stop_event=stop_event, logger=rec_logger
+                        )
+
+                        # finalize status based on stop vs natural end and disk state
                         recording.ended_at = datetime.utcnow()
-                        
-                        # Check if .ts file exists (completed) or .part file exists (failed)
                         ts_path = f"{recorded_filename}.ts"
                         part_path = f"{recorded_filename}.part"
-                        
-                        if os.path.exists(ts_path):
-                            recording.status = 'completed'
-                            recording.file_size = os.path.getsize(ts_path)
-                            recording.duration = int((recording.ended_at - recording.started_at).total_seconds())
-                        elif os.path.exists(part_path):
+                        if result.get("stopped_by_user"):
                             recording.status = 'failed'
-                            recording.file_size = os.path.getsize(part_path)
+                            if os.path.exists(part_path):
+                                recording.file_size = os.path.getsize(part_path)
                         else:
-                            recording.status = 'failed'  # No file found
-                        
+                            if os.path.exists(ts_path) and not os.path.exists(part_path):
+                                recording.status = 'completed'
+                                recording.file_size = os.path.getsize(ts_path)
+                            elif os.path.exists(part_path) and not os.path.exists(ts_path):
+                                recording.status = 'failed'
+                                recording.file_size = os.path.getsize(part_path)
+                            else:
+                                recording.status = 'failed'
+                        if recording.started_at:
+                            recording.duration = int((recording.ended_at - recording.started_at).total_seconds())
                         db.session.commit()
+                        rec_logger.info(f"Finalize status={recording.status} size={recording.file_size} ts_exists={os.path.exists(ts_path)} part_exists={os.path.exists(part_path)}")
+                        # teardown handlers
+                        try:
+                            sl_logger.removeHandler(fh)
+                            rec_logger.removeHandler(fh)
+                            fh.close()
+                        except Exception:
+                            pass
                         
                         message = f"Stream {config.user} completed. File saved as {filename}"
                         logger.info(message)
@@ -740,44 +773,43 @@ def get_active_recordings():
 def stop_recording(recording_id):
     """API endpoint to stop a recording"""
     recording = Recording.query.get_or_404(recording_id)
+    
+    if recording.status != 'recording':
+        return jsonify({'error': 'Recording is not currently active'}), 400
+    
     try:
-        info = recording_procinfo.get(recording_id)
-        if info and info.get("proc"):
-            proc = info["proc"]
-            # Ask nicely, then SIGTERM, then SIGKILL
-            try:
-                proc.terminate()
-                rc = proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                try:
-                    proc.kill()
-                    rc = proc.wait(timeout=5)
-                except Exception:
-                    rc = None
+        # Signal cooperative stop
+        flag = recording_stop_flags.get(recording_id)
+        if flag:
+            flag.set()
         else:
-            rc = None
-
-        # Now compute status from disk & rc
+            logger.warning(f"No stop flag for recording {recording_id}; it may have already ended")
+        # Give the loop time to flush and finalize (not rename .part)
+        wait_until = time.time() + 15
+        while time.time() < wait_until:
+            ts_path = os.path.join(get_download_path(), f"{recording.filename}.ts")
+            part_path = os.path.join(get_download_path(), f"{recording.filename}.part")
+            if os.path.exists(part_path) and not os.path.exists(ts_path):
+                break
+            time.sleep(0.5)
+        # Finalize DB status
         recording.ended_at = datetime.utcnow()
-        if recording.started_at and recording.ended_at:
-            recording.duration = max(0, int((recording.ended_at - recording.started_at).total_seconds()))
-        ts_path, part_path = _recording_paths(recording)
-        ts_exists, part_exists = os.path.exists(ts_path), os.path.exists(part_path)
-        if rc == 0 and ts_exists and not part_exists:
+        if recording.started_at:
+            recording.duration = int((recording.ended_at - recording.started_at).total_seconds())
+        ts_path = os.path.join(get_download_path(), f"{recording.filename}.ts")
+        part_path = os.path.join(get_download_path(), f"{recording.filename}.part")
+        if os.path.exists(ts_path) and not os.path.exists(part_path):
             recording.status = 'completed'
-            try: recording.file_size = os.path.getsize(ts_path)
-            except Exception: pass
-        elif part_exists and not ts_exists:
+            recording.file_size = os.path.getsize(ts_path)
+        elif os.path.exists(part_path) and not os.path.exists(ts_path):
             recording.status = 'failed'
-            try: recording.file_size = os.path.getsize(part_path)
-            except Exception: pass
+            recording.file_size = os.path.getsize(part_path)
         else:
             recording.status = 'failed'
-
         db.session.commit()
-        return jsonify({'message': 'Recording stopped successfully'})
+        return jsonify({'message': 'Recording stop signaled'})
     except Exception as e:
-        logger.error(f"Error stopping recording: {e}")
+        logger.error(f"Error stopping recording {recording_id}: {e}")
         return jsonify({'error': 'Failed to stop recording'}), 500
 
 @app.route('/api/test/create-sample-recording', methods=['POST'])

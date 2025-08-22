@@ -20,16 +20,17 @@ class StreamlinkManager:
         else:
             return 'mp4'
 
-    def cleanup(self, fd, temp_filename, final_filename, *args):
+    def cleanup(self, fd, temp_filename, final_filename, finalize=True):
         """
         Cleanup function to close the file descriptor and move the temporary file
         to its final destination.
         """
         fd.close()
-        if os.path.exists(temp_filename):
+        # Only finalize (rename .part -> final) on natural end
+        if finalize and os.path.exists(temp_filename):
             shutil.move(temp_filename, final_filename)
 
-    def run_streamlink(self, user, recorded_filename):
+    def run_streamlink(self, user, recorded_filename, stop_event=None, logger=None):
         session = streamlink.Streamlink()
         session.set_option("twitch-disable-hosting", True)
         session.set_option("twitch-disable-ads", True)
@@ -53,13 +54,19 @@ class StreamlinkManager:
         # Note: Signal handlers can only be set in the main thread
         # We'll handle cleanup in the finally block instead
 
+        stopped_by_user = False
         try:
             with open(temp_filename, 'wb') as f:
                 while True:
+                    if stop_event is not None and stop_event.is_set():
+                        stopped_by_user = True
+                        if logger: logger.info("Stop requested; breaking read loop")
+                        break
                     data = fd.read(1024)
                     if not data:
                         break
                     f.write(data)
         finally:
             # Ensure cleanup is called when the try block exits
-            self.cleanup(fd, temp_filename, final_filename)
+            self.cleanup(fd, temp_filename, final_filename, finalize=not stopped_by_user)
+        return {"stopped_by_user": stopped_by_user, "final": final_filename, "temp": temp_filename}
