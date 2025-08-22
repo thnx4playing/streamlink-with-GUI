@@ -14,6 +14,7 @@ services:
       - ${CONVERTED_VOLUME_PATH:-./converted}:/app/converted  # For converted MP4 files
       - ${DATA_VOLUME_PATH:-./data}:/app/data  # For database persistence
       - ${CONFIG_VOLUME_PATH:-./config}:/app/config  # For persistent configurations
+      - ${LOGS_VOLUME_PATH:-./logs}:/app/logs  # For persistent logs
     environment:
       # Web GUI Configuration
       - PORT=8080

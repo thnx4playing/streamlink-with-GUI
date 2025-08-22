@@ -2,7 +2,7 @@
 """
 Streamlink Web GUI - A web interface for managing Twitch stream recordings
 """
-import os, sys, time, json, threading, subprocess, signal, uuid
+import os, sys, time, json, threading, subprocess, signal, uuid, logging
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
@@ -19,11 +19,12 @@ from notification_manager import NotificationManager
 load_dotenv()
 
 # Configure logging with rotation
-os.makedirs('./logs', exist_ok=True)
+log_dir = '/app/logs'
+os.makedirs(log_dir, exist_ok=True)
 logger = logging.getLogger("streamlink-webgui")
 logger.setLevel(logging.INFO)
 if not logger.handlers:
-    fh = RotatingFileHandler("./logs/app.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    fh = RotatingFileHandler(f"{log_dir}/app.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(threadName)s %(name)s: %(message)s")
     fh.setFormatter(fmt)
     logger.addHandler(fh)
@@ -248,7 +249,7 @@ def start_recording_for_streamer(streamer: Streamer):
 
             cmd = build_streamlink_cmd(streamer, ts_path)
             # Per-recording logfile
-            rec_log = open(f"./logs/recording_{recording.id}.log", "a", encoding="utf-8")
+            rec_log = open(f"{log_dir}/recording_{recording.id}.log", "a", encoding="utf-8")
             rec_log.write(f"[BEGIN] {datetime.utcnow().isoformat()} Recording {recording.id} streamer={streamer.id} cmd={' '.join(cmd)}\n")
 
             stop_flag = threading.Event()
