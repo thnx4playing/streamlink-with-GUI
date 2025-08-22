@@ -234,9 +234,26 @@ def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
       --twitch-api-header=Authorization=OAuth <token>
       --http-cookie auth-token=<token>
       --http-header Client-ID=<client_id>      (optional)
+      --retry-streams 3                        (retry failed streams)
+      --retry-max 3                            (max retries per stream)
+      --retry-delay 5                          (delay between retries)
+      --stream-timeout 30                      (timeout for stream detection)
+      --ringbuffer-size 16777216               (16MB buffer for stability)
     Writes TS to ts_out_path + '.ts'
     """
     cmd = ["streamlink", "--loglevel", "info"]
+    
+    # Add resilience flags
+    cmd += [
+        "--retry-streams", "3",           # Retry up to 3 times if stream fails
+        "--retry-max", "3",               # Max retries per individual stream attempt
+        "--retry-delay", "5",             # 5 second delay between retries
+        "--stream-timeout", "30",         # 30 second timeout for stream detection
+        "--ringbuffer-size", "16777216",  # 16MB ring buffer for stability
+        "--hls-timeout", "60",            # 60 second timeout for HLS segments
+        "--hls-live-restart"              # Restart live streams if they go offline
+    ]
+    
     if auth:
         tok = _normalize_twitch_token(auth.oauth_token or "")
         if tok:
@@ -246,6 +263,7 @@ def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
             cmd += ["--http-header", f"Client-ID={auth.client_id}"]
         if auth.extra_flags:
             cmd += [p for p in auth.extra_flags.strip().split(" ") if p]
+    
     cmd += [f"https://twitch.tv/{username}", "best", "-o", f"{ts_out_path}.ts"]
     return cmd
 
