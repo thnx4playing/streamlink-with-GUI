@@ -2,16 +2,13 @@
 """
 Streamlink Web GUI - A web interface for managing Twitch stream recordings
 """
-import os
-import json
-import threading
-import time
-import logging
+import os, sys, time, json, threading, subprocess, signal, uuid
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from dotenv import load_dotenv
+from logging.handlers import RotatingFileHandler
 
 # Import existing modules
 from twitch_manager import TwitchManager, StreamStatus
@@ -21,9 +18,18 @@ from notification_manager import NotificationManager
 # Load environment variables
 load_dotenv()
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure logging with rotation
+os.makedirs('./logs', exist_ok=True)
+logger = logging.getLogger("streamlink-webgui")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    fh = RotatingFileHandler("./logs/app.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(threadName)s %(name)s: %(message)s")
+    fh.setFormatter(fmt)
+    logger.addHandler(fh)
+    sh = logging.StreamHandler(sys.stdout)
+    sh.setFormatter(fmt)
+    logger.addHandler(sh)
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -77,12 +83,14 @@ class Recording(db.Model):
     streamer_id = db.Column(db.Integer, db.ForeignKey('streamer.id'), nullable=False)
     filename = db.Column(db.String(255), nullable=False)
     title = db.Column(db.String(255))
-    status = db.Column(db.String(20), default='recording')  # recording, completed, failed
+    status = db.Column(db.String(20), default='recording')  # recording, completed, failed, deleted
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     ended_at = db.Column(db.DateTime)
     file_size = db.Column(db.Integer)  # in bytes
     duration = db.Column(db.Integer)  # in seconds
     game = db.Column(db.String(255))  # Game/category being played
+    pid = db.Column(db.Integer, nullable=True)
+    session_guid = db.Column(db.String(36), default=lambda: str(uuid.uuid4()))
 
 class ConversionSettings(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -123,6 +131,8 @@ class AppConfig:
 # Global variables for managing recording processes
 recording_processes = {}
 recording_threads = {}
+recording_procinfo = {}   # {recording_id: {"pid": int, "proc": Popen, "stop_flag": threading.Event}}
+active_by_streamer = {}   # {streamer_id: recording_id}
 
 def get_download_path():
     """Get the download path from environment or use default"""
@@ -189,6 +199,102 @@ def ensure_converted_directory():
     converted_path = get_converted_path()
     os.makedirs(converted_path, exist_ok=True)
     return converted_path
+
+def make_filename(streamer):
+    """Create a filename for a streamer"""
+    timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
+    return f"{streamer.twitch_name} - {timestamp}"
+
+def build_streamlink_cmd(streamer, output_path):
+    """Build the streamlink command for a streamer"""
+    quality = streamer.quality or 'best'
+    return [
+        'streamlink',
+        f'twitch.tv/{streamer.twitch_name}',
+        quality,
+        '-o', output_path,
+        '--force'
+    ]
+
+def _recording_paths(recording):
+    """Get the file paths for a recording"""
+    download_path = get_download_path()
+    base = os.path.join(download_path, recording.filename)
+    return f"{base}.ts", f"{base}.part"
+
+def start_recording_for_streamer(streamer: Streamer):
+    """Start a recording for a specific streamer with duplicate protection"""
+    # Block duplicates per streamer
+    existing_id = active_by_streamer.get(streamer.id)
+    if existing_id:
+        t = recording_threads.get(existing_id)
+        if t and t.is_alive():
+            logger.warning(f"Refusing to start duplicate recording for streamer {streamer.id}; active recording {existing_id} running.")
+            return None
+        else:
+            active_by_streamer.pop(streamer.id, None)
+
+    recording = Recording(streamer_id=streamer.id, filename=make_filename(streamer),
+                          title=streamer.title, game=streamer.game, status='recording')
+    db.session.add(recording); db.session.commit()
+
+    def _run():
+        try:
+            download_path = get_download_path()
+            base = os.path.join(download_path, recording.filename)
+            ts_path = f"{base}.ts"
+            part_path = f"{base}.ts.part"
+            os.makedirs(download_path, exist_ok=True)
+
+            cmd = build_streamlink_cmd(streamer, ts_path)
+            # Per-recording logfile
+            rec_log = open(f"./logs/recording_{recording.id}.log", "a", encoding="utf-8")
+            rec_log.write(f"[BEGIN] {datetime.utcnow().isoformat()} Recording {recording.id} streamer={streamer.id} cmd={' '.join(cmd)}\n")
+
+            stop_flag = threading.Event()
+            recording_procinfo[recording.id] = {"pid": None, "proc": None, "stop_flag": stop_flag}
+            active_by_streamer[streamer.id] = recording.id
+
+            proc = subprocess.Popen(cmd, stdout=rec_log, stderr=subprocess.STDOUT, text=True)
+            recording.pid = proc.pid
+            db.session.commit()
+            recording_procinfo[recording.id]["pid"] = proc.pid
+            recording_procinfo[recording.id]["proc"] = proc
+
+            # Wait for process to finish
+            rc = proc.wait()
+            recording.ended_at = datetime.utcnow()
+
+            # Decide status from process exit first, then disk
+            if rc == 0 and os.path.exists(ts_path) and not os.path.exists(part_path):
+                recording.status = 'completed'
+                try: recording.file_size = os.path.getsize(ts_path)
+                except Exception: pass
+            else:
+                recording.status = 'failed'
+                try:
+                    size = os.path.getsize(part_path if os.path.exists(part_path) else ts_path)
+                    recording.file_size = size
+                except Exception:
+                    pass
+
+            if recording.started_at and recording.ended_at:
+                recording.duration = max(0, int((recording.ended_at - recording.started_at).total_seconds()))
+
+            db.session.commit()
+            rec_log.write(f"[END] rc={rc} status={recording.status} ended_at={recording.ended_at.isoformat()}\n")
+            rec_log.close()
+        except Exception as e:
+            logger.exception(f"Recording thread error: {e}")
+        finally:
+            recording_threads.pop(recording.id, None)
+            recording_procinfo.pop(recording.id, None)
+            active_by_streamer.pop(streamer.id, None)
+
+    th = threading.Thread(target=_run, name=f"rec-{recording.id}", daemon=True)
+    th.start()
+    recording_threads[recording.id] = th
+    return recording.id
 
 def record_stream(streamer_id):
     """Background function to record a stream"""
@@ -498,8 +604,23 @@ def get_recordings():
         
         recordings_data = []
         for r in recordings.items:
-            # Get actual status based on file existence
-            actual_status = get_recording_status(r)
+            # Only adjust if not deleted and no live process is tracked
+            if r.status != 'deleted' and not recording_procinfo.get(r.id):
+                ts_path, part_path = _recording_paths(r)
+                ts_exists = os.path.exists(ts_path)
+                part_exists = os.path.exists(part_path)
+                new_status = None
+                if part_exists and not ts_exists:
+                    new_status = 'failed'
+                elif ts_exists and not part_exists:
+                    new_status = 'completed'
+                if new_status and new_status != r.status:
+                    r.status = new_status
+                    try:
+                        r.file_size = os.path.getsize(ts_path if new_status == 'completed' else part_path)
+                    except Exception:
+                        pass
+                    db.session.commit()
             
             # For conversion tab, only include convertible recordings
             if conversion_only and not is_recording_convertible(r):
@@ -513,11 +634,12 @@ def get_recordings():
                 'filename': r.filename,
                 'title': r.title,
                 'game': r.game,
-                'status': actual_status,  # Use actual status instead of DB status
+                'status': r.status,
                 'started_at': r.started_at.isoformat(),
                 'ended_at': r.ended_at.isoformat() if r.ended_at else None,
                 'file_size': r.file_size,
-                'duration': r.duration
+                'duration': r.duration,
+                'pid': r.pid
             })
         
         response_data = {
@@ -617,36 +739,44 @@ def get_active_recordings():
 def stop_recording(recording_id):
     """API endpoint to stop a recording"""
     recording = Recording.query.get_or_404(recording_id)
-    
-    if recording.status != 'recording':
-        return jsonify({'error': 'Recording is not currently active'}), 400
-    
     try:
-        # Update recording status
-        recording.status = 'completed'
+        info = recording_procinfo.get(recording_id)
+        if info and info.get("proc"):
+            proc = info["proc"]
+            # Ask nicely, then SIGTERM, then SIGKILL
+            try:
+                proc.terminate()
+                rc = proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                    rc = proc.wait(timeout=5)
+                except Exception:
+                    rc = None
+        else:
+            rc = None
+
+        # Now compute status from disk & rc
         recording.ended_at = datetime.utcnow()
-        
-        # Calculate duration
-        if recording.started_at:
-            recording.duration = int((recording.ended_at - recording.started_at).total_seconds())
-        
-        # Calculate file size
-        download_path = get_download_path()
-        full_path = f"{os.path.join(download_path, recording.filename)}.ts"
-        if os.path.exists(full_path):
-            recording.file_size = os.path.getsize(full_path)
-        
+        if recording.started_at and recording.ended_at:
+            recording.duration = max(0, int((recording.ended_at - recording.started_at).total_seconds()))
+        ts_path, part_path = _recording_paths(recording)
+        ts_exists, part_exists = os.path.exists(ts_path), os.path.exists(part_path)
+        if rc == 0 and ts_exists and not part_exists:
+            recording.status = 'completed'
+            try: recording.file_size = os.path.getsize(ts_path)
+            except Exception: pass
+        elif part_exists and not ts_exists:
+            recording.status = 'failed'
+            try: recording.file_size = os.path.getsize(part_path)
+            except Exception: pass
+        else:
+            recording.status = 'failed'
+
         db.session.commit()
-        
-        # Stop the recording thread for this streamer
-        if recording.streamer_id in recording_threads:
-            # Note: We can't easily stop the thread, but it will stop on next iteration
-            # when it checks if the streamer is still active
-            pass
-        
         return jsonify({'message': 'Recording stopped successfully'})
     except Exception as e:
-        logger.error(f"Error stopping recording {recording_id}: {e}")
+        logger.error(f"Error stopping recording: {e}")
         return jsonify({'error': 'Failed to stop recording'}), 500
 
 @app.route('/api/test/create-sample-recording', methods=['POST'])
@@ -1324,6 +1454,18 @@ if __name__ == '__main__':
                 logger.info(f"Attempt {attempt + 1}: Creating database tables...")
                 db.create_all()
                 
+                # Gentle ALTERs for new columns
+                with db.engine.begin() as conn:
+                    conn.execute(db.text("PRAGMA foreign_keys=ON"))
+                    for col, ddl in [
+                        ("pid", "ALTER TABLE recording ADD COLUMN pid INTEGER"),
+                        ("session_guid", "ALTER TABLE recording ADD COLUMN session_guid VARCHAR(36)")
+                    ]:
+                        try:
+                            conn.execute(db.text(ddl))
+                        except Exception:
+                            pass
+                
                 # Check if we need to migrate the database schema
                 try:
                     # Try to access the new columns to see if they exist
@@ -1420,14 +1562,33 @@ if __name__ == '__main__':
                     logger.error("All database locations failed. Exiting.")
                     exit(1)
     
+    # Reconcile DB 'recording' rows that have no process
+    try:
+        with app.app_context():
+            stale = Recording.query.filter_by(status='recording').all()
+            for r in stale:
+                ts_path, part_path = _recording_paths(r)
+                ts_exists, part_exists = os.path.exists(ts_path), os.path.exists(part_path)
+                if ts_exists and not part_exists:
+                    r.status = 'completed'
+                elif part_exists and not ts_exists:
+                    r.status = 'failed'
+                else:
+                    r.status = 'failed'
+                r.ended_at = r.ended_at or datetime.utcnow()
+                if r.started_at and r.ended_at:
+                    r.duration = max(0, int((r.ended_at - r.started_at).total_seconds()))
+            db.session.commit()
+    except Exception as e:
+        logger.error(f"Error reconciling stale recordings: {e}")
+
     # Start recording threads for existing active streamers
     try:
         with app.app_context():
             active_streamers = Streamer.query.filter_by(is_active=True).all()
             for streamer in active_streamers:
-                thread = threading.Thread(target=record_stream, args=(streamer.id,), daemon=True)
-                thread.start()
-                recording_threads[streamer.id] = thread
+                # we'll only start on demand via UI / scheduler to avoid duplicates
+                logger.info(f"Streamer {streamer.id} is active; waiting for explicit start to avoid duplicates.")
     except Exception as e:
         logger.error(f"Error starting recording threads: {e}")
     

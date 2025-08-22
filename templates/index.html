@@ -1188,7 +1188,7 @@
                     row.innerHTML = `
                         <td>${streamerName}</td>
                         <td>${formatDateEastern(recording.started_at)}</td>
-                        <td>${recording.title || 'No title'}</td>
+                        <td>${recording.title || 'No title'}${recording.pid ? ` • pid ${recording.pid}` : ''}</td>
                         <td>${duration}</td>
                         <td><span class="badge ${statusClass}">${status}</span></td>
                         <td>
