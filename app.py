@@ -230,24 +230,22 @@ def _normalize_twitch_token(raw: str) -> str:
 
 def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
     """
-    Build Streamlink CLI for Twitch using headers as per official docs:
-      --twitch-api-header=Authorization=OAuth <auth-token>
-      --http-header Client-ID=<client-id>   (optional)
+    Build Streamlink CLI for Twitch using:
+      --twitch-api-header=Authorization=OAuth <token>
+      --http-cookie auth-token=<token>
+      --http-header Client-ID=<client_id>      (optional)
     Writes TS to ts_out_path + '.ts'
     """
     cmd = ["streamlink", "--loglevel", "info"]
-    # Optional: enable lower latency if you prefer
-    # cmd += ["--twitch-low-latency"]
     if auth:
         tok = _normalize_twitch_token(auth.oauth_token or "")
         if tok:
             cmd += [f"--twitch-api-header=Authorization=OAuth {tok}"]
+            cmd += ["--http-cookie", f"auth-token={tok}"]
         if auth.client_id:
             cmd += ["--http-header", f"Client-ID={auth.client_id}"]
         if auth.extra_flags:
-            # naive split by space; advanced parsing optional
             cmd += [p for p in auth.extra_flags.strip().split(" ") if p]
-        # client_secret isn't used by Streamlink when watching; keep it stored for your app/UI
     cmd += [f"https://twitch.tv/{username}", "best", "-o", f"{ts_out_path}.ts"]
     return cmd
 
@@ -257,9 +255,9 @@ def looks_like_twitch(streamer) -> bool:
         plat = (getattr(streamer, "platform", None) or "").lower()
     except Exception:
         plat = ""
-    name = (getattr(streamer, "username", None) or "").lower()
+    name = (getattr(streamer, "twitch_name", None) or getattr(streamer, "username", None) or "").lower()
     url  = (getattr(streamer, "url", None) or getattr(streamer, "source_url", None) or "")
-    return "twitch" in plat or "twitch.tv" in url.lower() or (name and not url)
+    return "twitch" in plat or "twitch.tv" in url.lower() or bool(name)
 
 def build_streamlink_cmd(streamer, output_path):
     """Build the streamlink command for a streamer"""
@@ -461,9 +459,39 @@ def record_stream(streamer_id):
                         stop_event = threading.Event()
                         recording_stop_flags[recording.id] = stop_event
 
-                        result = streamlink_manager.run_streamlink(
-                            config.user, recorded_filename, stop_event=stop_event, logger=rec_logger
-                        )
+                        use_cli = looks_like_twitch(streamer)
+                        auth = TwitchAuth.query.first()
+                        if use_cli:
+                            # Build CLI and launch subprocess; capture stdout to per-recording file
+                            cmd = build_twitch_cli_cmd(streamer.twitch_name, recorded_filename, auth)
+                            rec_logger.info("CLI path → %s", " ".join(cmd))
+                            proc_env = os.environ.copy()
+                            if auth:
+                                proc_env["STREAMLINK_TWITCH_CLIENT_ID"] = (auth.client_id or "")
+                                proc_env["STREAMLINK_TWITCH_AUTH_TOKEN"] = _normalize_twitch_token(auth.oauth_token or "")
+                            info = {"pid": None, "proc": None, "stop_flag": stop_event}
+                            recording_procinfo[recording.id] = info
+                            active_by_streamer[streamer.id] = recording.id
+                            proc = subprocess.Popen(
+                                cmd,
+                                stdout=open(f"{log_dir}/recording_{recording.id}.log", "a", encoding="utf-8"),
+                                stderr=subprocess.STDOUT,
+                                text=True,
+                                env=proc_env
+                            )
+                            info["pid"] = proc.pid
+                            info["proc"] = proc
+                            recording.pid = proc.pid
+                            db.session.commit()
+                            rc = proc.wait()
+                            rec_logger.info("CLI exited rc=%s", rc)
+                            # mimic library-result shape for status logic below
+                            result = {"stopped_by_user": False}
+                        else:
+                            # Fallback: Python library path
+                            result = streamlink_manager.run_streamlink(
+                                config.user, recorded_filename, stop_event=stop_event, logger=rec_logger
+                            )
 
                         # finalize status based on stop vs natural end and disk state
                         recording.ended_at = datetime.utcnow()
