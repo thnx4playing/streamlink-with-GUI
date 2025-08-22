@@ -592,8 +592,8 @@ def get_recordings():
         ).distinct().all()
         converted_ids = [r[0] for r in converted_recording_ids if r[0] is not None]
         
-        # Query recordings excluding converted ones
-        recordings_query = Recording.query
+        # Query recordings excluding converted ones and deleted ones
+        recordings_query = Recording.query.filter(Recording.status != 'deleted')
         if converted_ids:
             recordings_query = recordings_query.filter(~Recording.id.in_(converted_ids))
         
