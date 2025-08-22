@@ -636,8 +636,8 @@ def get_recordings():
                 'title': r.title,
                 'game': r.game,
                 'status': r.status,
-                'started_at': r.started_at.isoformat(),
-                'ended_at': r.ended_at.isoformat() if r.ended_at else None,
+                'started_at': r.started_at.isoformat() + 'Z',
+                'ended_at': r.ended_at.isoformat() + 'Z' if r.ended_at else None,
                 'file_size': r.file_size,
                 'duration': r.duration,
                 'pid': r.pid
@@ -729,7 +729,7 @@ def get_active_recordings():
             'title': recording.title,
             'game': recording.game,
             'status': recording.status,
-            'started_at': recording.started_at.isoformat(),
+                            'started_at': recording.started_at.isoformat() + 'Z',
             'file_size': recording.file_size,
             'duration': recording.duration
         })
@@ -977,9 +977,9 @@ def get_conversion_progress():
                     'progress': job.progress,
                     'output_filename': job.output_filename,
                     'schedule_type': job.schedule_type,
-                    'scheduled_at': job.scheduled_at.isoformat() if job.scheduled_at else None,
-                    'started_at': job.started_at.isoformat() if job.started_at else None,
-                    'completed_at': job.completed_at.isoformat() if job.completed_at else None,
+                    'scheduled_at': job.scheduled_at.isoformat() + 'Z' if job.scheduled_at else None,
+                    'started_at': job.started_at.isoformat() + 'Z' if job.started_at else None,
+                    'completed_at': job.completed_at.isoformat() + 'Z' if job.completed_at else None,
                     'custom_filename': job.custom_filename,
                     'delete_original': job.delete_original
                 })
