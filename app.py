@@ -230,40 +230,38 @@ def _normalize_twitch_token(raw: str) -> str:
 
 def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
     """
-    Build Streamlink CLI for Twitch using:
-      --twitch-api-header=Authorization=OAuth <token>
-      --http-cookie auth-token=<token>
-      --http-header Client-ID=<client_id>      (optional)
-      --retry-streams 3                        (retry failed streams)
-      --retry-max 3                            (max retries per stream)
-      --retry-delay 5                          (delay between retries)
-      --stream-timeout 30                      (timeout for stream detection)
-      --ringbuffer-size 16777216               (16MB buffer for stability)
-    Writes TS to ts_out_path + '.ts'
+    Build a Streamlink CLI that is compatible across versions:
+      - Twitch auth via header + cookie (per docs)
+      - Conservative, widely-supported retry / timeout flags
     """
     cmd = ["streamlink", "--loglevel", "info"]
-    
-    # Add resilience flags
-    cmd += [
-        "--retry-streams", "3",           # Retry up to 3 times if stream fails
-        "--retry-max", "3",               # Max retries per individual stream attempt
-        "--retry-delay", "5",             # 5 second delay between retries
-        "--stream-timeout", "30",         # 30 second timeout for stream detection
-        "--ringbuffer-size", "16777216",  # 16MB ring buffer for stability
-        "--hls-timeout", "60",            # 60 second timeout for HLS segments
-        "--hls-live-restart"              # Restart live streams if they go offline
-    ]
-    
+
+    # HTTP/Twitch auth (modern, per docs)
     if auth:
         tok = _normalize_twitch_token(auth.oauth_token or "")
         if tok:
+            # one argv containing a space is fine when passing a list to Popen
             cmd += [f"--twitch-api-header=Authorization=OAuth {tok}"]
             cmd += ["--http-cookie", f"auth-token={tok}"]
         if auth.client_id:
             cmd += ["--http-header", f"Client-ID={auth.client_id}"]
-        if auth.extra_flags:
-            cmd += [p for p in auth.extra_flags.strip().split(" ") if p]
-    
+
+    # Version-safe resiliency flags (supported across 3.x–7.x)
+    # - DO NOT use --retry-delay / --retry-max / --hls-timeout here (not universal)
+    cmd += [
+        "--retry-open", "3",           # retry fetching streams
+        "--retry-streams", "3",        # retry stream selection
+        "--stream-timeout", "60",      # abort if no data for 60s
+        "--hls-segment-timeout", "20", # per-segment download timeout
+        "--hls-live-edge", "3",        # buffer 3 segments to reduce stalls
+        "--ringbuffer-size", "16M",    # smooths over short hiccups
+    ]
+
+    # Allow user to append extra flags from Settings (optional)
+    if auth and auth.extra_flags:
+        cmd += [p for p in auth.extra_flags.strip().split(" ") if p]
+
+    # URL, quality, output
     cmd += [f"https://twitch.tv/{username}", "best", "-o", f"{ts_out_path}.ts"]
     return cmd
 
