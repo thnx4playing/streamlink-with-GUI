@@ -1682,10 +1682,10 @@
                                              <i class="fas fa-file-video"></i>
                                          </button>` : ''
                                      }
-                                     <button class="btn btn-sm btn-outline-secondary" onclick="removeConversionJobFromHistory(${conversion.job_id})" 
-                                             title="Remove from history">
-                                         <i class="fas fa-trash"></i>
-                                     </button>
+                                                                           <button class="btn btn-sm btn-outline-secondary" onclick="removeConversionJobFromHistory(${conversion.job_id})" 
+                                              title="Remove from history">
+                                          <i class="fas fa-history"></i>
+                                      </button>
                                  </div>
                              </td>
                          `;
@@ -1812,23 +1812,8 @@
                     });
                     
                     if (response.ok) {
-                        // Update the status to 'deleted' in the UI immediately
-                        const rows = document.querySelectorAll('#recent-recordings-list tr');
-                        rows.forEach(row => {
-                            const removeBtn = row.querySelector('button[onclick*="removeRecordingFromHistory"]');
-                            if (removeBtn && removeBtn.getAttribute('onclick').includes(recordingId.toString())) {
-                                const statusCell = row.querySelector('td:nth-child(5)');
-                                if (statusCell) {
-                                    statusCell.innerHTML = '<span class="badge bg-dark">Deleted</span>';
-                                }
-                                // Disable the remove button
-                                removeBtn.disabled = true;
-                                removeBtn.innerHTML = '<i class="fas fa-check"></i>';
-                                removeBtn.className = 'btn btn-sm btn-success';
-                                removeBtn.title = 'Removed from history';
-                            }
-                        });
-                        
+                        // Refresh the data instead of just updating UI
+                        loadRecentRecordings();
                         loadStatus();
                         // Also refresh conversion recordings if on conversion tab
                         if (document.getElementById('conversion-tab').style.display !== 'none') {
@@ -1892,9 +1877,9 @@
                                 break;
                         }
                         
-                        const scheduledDate = job.scheduled_at ? new Date(job.scheduled_at).toLocaleString() : 'No date';
-                        const lastRunDate = job.completed_at ? new Date(job.completed_at).toLocaleString() : 
-                                           (job.started_at ? new Date(job.started_at).toLocaleString() : 'Pending');
+                        const scheduledDate = job.scheduled_at ? formatDateEastern(job.scheduled_at) : 'No date';
+                        const lastRunDate = job.completed_at ? formatDateEastern(job.completed_at) : 
+                                           (job.started_at ? formatDateEastern(job.started_at) : 'Pending');
                         const lastRunStatus = job.status === 'completed' ? 'Completed' : 
                                              (job.status === 'failed' ? 'Failed' : 
                                              (job.status === 'converting' ? 'Running' : 'Pending'));
