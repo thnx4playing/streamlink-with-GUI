@@ -216,23 +216,34 @@ def make_filename(streamer):
     timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
     return f"{streamer.twitch_name} - {timestamp}"
 
+def _normalize_twitch_token(raw: str) -> str:
+    """Accept 'oauth:abcd', 'OAuth abcd', or bare token -> return 'abcd'"""
+    if not raw:
+        return ""
+    s = raw.strip()
+    if s.lower().startswith("oauth:"):
+        s = s.split(":", 1)[1].strip()
+    if s.lower().startswith("oauth "):
+        s = s.split(" ", 1)[1].strip()
+    return s
+
 def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
     """
-    Build a Streamlink CLI command for Twitch with optional auth flags.
-    We write transport stream to ts_out_path (without extension add .ts).
+    Build Streamlink CLI for Twitch using headers as per official docs:
+      --twitch-api-header=Authorization=OAuth <auth-token>
+      --http-header Client-ID=<client-id>   (optional)
+    Writes TS to ts_out_path + '.ts'
     """
     cmd = ["streamlink", "--loglevel", "info"]
-    # Low latency is optional; ad skip is plugin default in many builds, but keep it explicit if you want:
+    # Optional: enable lower latency if you prefer
     # cmd += ["--twitch-low-latency"]
     if auth:
+        tok = _normalize_twitch_token(auth.oauth_token or "")
+        if tok:
+            cmd += [f"--twitch-api-header=Authorization=OAuth {tok}"]
         if auth.client_id:
-            cmd += ["--twitch-client-id", auth.client_id]
-        if auth.client_secret:
-            cmd += ["--twitch-client-secret", auth.client_secret]
-        if auth.oauth_token:
-            # oauth token expected without "oauth:" prefix; if user pasted with prefix it still works
-            cmd += ["--twitch-oauth-token", auth.oauth_token]
-    # Ensure output target
+            cmd += ["--http-header", f"Client-ID={auth.client_id}"]
+        # client_secret isn't used by Streamlink when watching; keep it stored for your app/UI
     cmd += [f"https://twitch.tv/{username}", "best", "-o", f"{ts_out_path}.ts"]
     return cmd
 
@@ -284,7 +295,26 @@ def start_recording_for_streamer(streamer: Streamer):
 
             # Per-recording logfile
             rec_log = open(f"{log_dir}/recording_{recording.id}.log", "a", encoding="utf-8")
-            rec_log.write(f"[BEGIN] {datetime.utcnow().isoformat()} Recording {recording.id} streamer={streamer.id} cmd={' '.join(cmd)}\n")
+            def _mask(s: str) -> str:
+                if not s: return s
+                if "Authorization=OAuth " in s:
+                    head, token = s.split("Authorization=OAuth ", 1)
+                    token = token.strip()
+                    if " " in token:
+                        token = token.split(" ")[0]
+                    if len(token) > 8:
+                        token = token[:4] + "•••" + token[-4:]
+                    s = head + "Authorization=OAuth " + token
+                if "Client-ID=" in s:
+                    head, cid = s.split("Client-ID=", 1)
+                    cid = cid.strip()
+                    if " " in cid:
+                        cid = cid.split(" ")[0]
+                    if len(cid) > 8:
+                        cid = cid[:4] + "•••" + cid[-4:]
+                    s = head + "Client-ID=" + cid
+                return s
+            rec_log.write(f"[BEGIN] {datetime.utcnow().isoformat()} Recording {recording.id} streamer={streamer.username} cmd={' '.join(_mask(x) for x in cmd)}\n")
 
             stop_flag = threading.Event()
             recording_procinfo[recording.id] = {"pid": None, "proc": None, "stop_flag": stop_flag}
@@ -292,11 +322,10 @@ def start_recording_for_streamer(streamer: Streamer):
 
             # Launch
             proc_env = os.environ.copy()
-            # Also expose as env vars if the image honors them (harmless if unused)
+            # Also expose as env vars (some wrappers read these)
             if auth:
-                if auth.client_id:    proc_env["STREAMLINK_TWITCH_CLIENT_ID"] = auth.client_id
-                if auth.client_secret: proc_env["STREAMLINK_TWITCH_CLIENT_SECRET"] = auth.client_secret
-                if auth.oauth_token:  proc_env["STREAMLINK_TWITCH_OAUTH_TOKEN"] = auth.oauth_token
+                proc_env["STREAMLINK_TWITCH_CLIENT_ID"] = auth.client_id or ""
+                proc_env["STREAMLINK_TWITCH_AUTH_TOKEN"] = _normalize_twitch_token(auth.oauth_token or "")
 
             proc = subprocess.Popen(cmd, stdout=rec_log, stderr=subprocess.STDOUT, text=True, env=proc_env)
             recording.pid = proc.pid
