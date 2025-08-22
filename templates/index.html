@@ -965,6 +965,11 @@
                                     <input id="tw-oauth-token" type="password" class="form-control" placeholder="oauth:xxxxxxxx or token" autocomplete="off">
                                     <small class="text-muted">Paste your token (with or without the <code>oauth:</code> prefix). Stored locally in your DB.</small>
                                 </div>
+                                <div class="col-md-12">
+                                    <label class="form-label">Extra Twitch Flags (optional)</label>
+                                    <input id="tw-extra-flags" type="text" class="form-control" placeholder="e.g. --twitch-low-latency" autocomplete="off">
+                                    <small class="text-muted">Pass raw flags to Streamlink. Useful for testing <code>--twitch-low-latency</code> or <code>--twitch-force-client-integrity</code>.</small>
+                                </div>
                             </div>
                             <div class="mt-3 d-flex gap-2">
                                 <button class="btn btn-primary" onclick="saveTwitchAuth()"><i class="fas fa-save me-1"></i>Save</button>
@@ -2194,6 +2199,7 @@
                 const tokenInput = document.getElementById('tw-oauth-token');
                 secretInput.value = '';
                 tokenInput.value = '';
+                document.getElementById('tw-extra-flags').value = data.extra_flags || '';
             } catch (e) {
                 console.error('loadTwitchAuth error', e);
             }
@@ -2203,7 +2209,8 @@
             const body = {
                 client_id: document.getElementById('tw-client-id').value || '',
                 client_secret: document.getElementById('tw-client-secret').value || '',
-                oauth_token: document.getElementById('tw-oauth-token').value || ''
+                oauth_token: document.getElementById('tw-oauth-token').value || '',
+                extra_flags: document.getElementById('tw-extra-flags').value || ''
             };
             try {
                 const res = await fetch('/api/twitch-auth', {

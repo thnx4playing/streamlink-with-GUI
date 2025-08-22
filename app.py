@@ -122,6 +122,7 @@ class TwitchAuth(db.Model):
     client_id = db.Column(db.String(128), nullable=True)
     client_secret = db.Column(db.String(256), nullable=True)
     oauth_token = db.Column(db.String(512), nullable=True)
+    extra_flags = db.Column(db.String(512), nullable=True)  # e.g. "--twitch-low-latency"
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class AppConfig:
@@ -243,9 +244,22 @@ def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
             cmd += [f"--twitch-api-header=Authorization=OAuth {tok}"]
         if auth.client_id:
             cmd += ["--http-header", f"Client-ID={auth.client_id}"]
+        if auth.extra_flags:
+            # naive split by space; advanced parsing optional
+            cmd += [p for p in auth.extra_flags.strip().split(" ") if p]
         # client_secret isn't used by Streamlink when watching; keep it stored for your app/UI
     cmd += [f"https://twitch.tv/{username}", "best", "-o", f"{ts_out_path}.ts"]
     return cmd
+
+def looks_like_twitch(streamer) -> bool:
+    """Return True if this streamer should use the Twitch CLI path."""
+    try:
+        plat = (getattr(streamer, "platform", None) or "").lower()
+    except Exception:
+        plat = ""
+    name = (getattr(streamer, "username", None) or "").lower()
+    url  = (getattr(streamer, "url", None) or getattr(streamer, "source_url", None) or "")
+    return "twitch" in plat or "twitch.tv" in url.lower() or (name and not url)
 
 def build_streamlink_cmd(streamer, output_path):
     """Build the streamlink command for a streamer"""
@@ -288,9 +302,9 @@ def start_recording_for_streamer(streamer: Streamer):
             part_path = f"{base}.ts.part"
             os.makedirs(download_path, exist_ok=True)
 
-            # Prefer Twitch CLI path when we have auth
+            # Prefer Twitch CLI path for Twitch, regardless of platform label
             auth = TwitchAuth.query.first()
-            use_cli = bool(auth and auth.client_id)  # Use CLI if we have auth credentials
+            use_cli = looks_like_twitch(streamer)
             cmd = build_twitch_cli_cmd(streamer.twitch_name, base, auth) if use_cli else build_streamlink_cmd(streamer, ts_path)
 
             # Per-recording logfile
@@ -314,7 +328,7 @@ def start_recording_for_streamer(streamer: Streamer):
                         cid = cid[:4] + "•••" + cid[-4:]
                     s = head + "Client-ID=" + cid
                 return s
-            rec_log.write(f"[BEGIN] {datetime.utcnow().isoformat()} Recording {recording.id} streamer={streamer.username} cmd={' '.join(_mask(x) for x in cmd)}\n")
+            rec_log.write(f"[BEGIN] {datetime.utcnow().isoformat()} Recording {recording.id} streamer={streamer.username} use_cli={use_cli} cmd={' '.join(_mask(x) for x in cmd)}\n")
 
             stop_flag = threading.Event()
             recording_procinfo[recording.id] = {"pid": None, "proc": None, "stop_flag": stop_flag}
@@ -322,11 +336,9 @@ def start_recording_for_streamer(streamer: Streamer):
 
             # Launch
             proc_env = os.environ.copy()
-            # Also expose as env vars (some wrappers read these)
             if auth:
-                proc_env["STREAMLINK_TWITCH_CLIENT_ID"] = auth.client_id or ""
+                proc_env["STREAMLINK_TWITCH_CLIENT_ID"] = (auth.client_id or "")
                 proc_env["STREAMLINK_TWITCH_AUTH_TOKEN"] = _normalize_twitch_token(auth.oauth_token or "")
-
             proc = subprocess.Popen(cmd, stdout=rec_log, stderr=subprocess.STDOUT, text=True, env=proc_env)
             recording.pid = proc.pid
             db.session.commit()
@@ -1057,7 +1069,7 @@ def health_check():
 def get_twitch_auth():
     ta = TwitchAuth.query.first()
     if not ta:
-        return jsonify({'client_id': '', 'client_secret': '', 'oauth_token': ''})
+        return jsonify({'client_id': '', 'client_secret': '', 'oauth_token': '', 'extra_flags': ''})
     # Masked response—only indicate presence, the UI can optionally reveal fully if you prefer
     def mask(s):
         if not s: return ''
@@ -1065,7 +1077,8 @@ def get_twitch_auth():
     return jsonify({
         'client_id': ta.client_id or '',
         'client_secret': mask(ta.client_secret),
-        'oauth_token': mask(ta.oauth_token)
+        'oauth_token': mask(ta.oauth_token),
+        'extra_flags': ta.extra_flags or ''
     })
 
 @app.route('/api/twitch-auth', methods=['POST'])
@@ -1074,6 +1087,7 @@ def set_twitch_auth():
     client_id = (data.get('client_id') or '').strip()
     client_secret = (data.get('client_secret') or '').strip()
     oauth_token = (data.get('oauth_token') or '').strip()
+    extra_flags = (data.get('extra_flags') or '').strip()
     ta = TwitchAuth.query.first()
     if not ta:
         ta = TwitchAuth()
@@ -1082,6 +1096,7 @@ def set_twitch_auth():
     ta.client_id = client_id
     ta.client_secret = client_secret
     ta.oauth_token = oauth_token
+    ta.extra_flags = extra_flags
     ta.updated_at = datetime.utcnow()
     db.session.commit()
     return jsonify({'message': 'Twitch auth saved'})
@@ -1652,6 +1667,8 @@ if __name__ == '__main__':
                     ]:
                         try: conn.execute(db.text(ddl))
                         except Exception: pass
+                    try: conn.execute(db.text("ALTER TABLE twitch_auth ADD COLUMN extra_flags VARCHAR(512)"))
+                    except Exception: pass
                 
                 # Check if we need to migrate the database schema
                 try:
