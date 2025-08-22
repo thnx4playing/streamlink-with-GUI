@@ -945,6 +945,35 @@
                         </div>
                     </div>
 
+                    <!-- Twitch Authentication Settings -->
+                    <div class="card mt-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <span><i class="fab fa-twitch me-2"></i>Twitch Authentication</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label">Client ID</label>
+                                    <input id="tw-client-id" type="text" class="form-control" placeholder="e.g. abc123xyz" autocomplete="off">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label">Client Secret</label>
+                                    <input id="tw-client-secret" type="password" class="form-control" placeholder="••••••••" autocomplete="off">
+                                </div>
+                                <div class="col-md-12">
+                                    <label class="form-label">OAuth Token</label>
+                                    <input id="tw-oauth-token" type="password" class="form-control" placeholder="oauth:xxxxxxxx or token" autocomplete="off">
+                                    <small class="text-muted">Paste your token (with or without the <code>oauth:</code> prefix). Stored locally in your DB.</small>
+                                </div>
+                            </div>
+                            <div class="mt-3 d-flex gap-2">
+                                <button class="btn btn-primary" onclick="saveTwitchAuth()"><i class="fas fa-save me-1"></i>Save</button>
+                                <button class="btn btn-outline-secondary" onclick="loadTwitchAuth()"><i class="fas fa-sync me-1"></i>Reload</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                     <!-- Scheduled Conversions Tab -->
                     <div class="tab-pane fade" id="scheduled-conversions-content" role="tabpanel">
                         <div class="card">
@@ -1494,6 +1523,7 @@
                 loadConversionOptions();
                 refreshConversionProgress();
                 loadScheduledTasks();
+                loadTwitchAuth();
                 
                 // Set the default tab to Conversion Status
                 const conversionStatusTab = document.getElementById('conversion-status-tab');
@@ -2149,6 +2179,47 @@
                 }
             } catch (error) {
                 console.error('Error loading conversion options:', error);
+            }
+        }
+
+        // Twitch Authentication Functions
+        async function loadTwitchAuth() {
+            try {
+                const res = await fetch('/api/twitch-auth');
+                const data = await res.json();
+                // We return masked secrets; only prefill raw client_id
+                document.getElementById('tw-client-id').value = data.client_id || '';
+                // For secrets/tokens, leave blank if masked to avoid overwriting with masks
+                const secretInput = document.getElementById('tw-client-secret');
+                const tokenInput = document.getElementById('tw-oauth-token');
+                secretInput.value = '';
+                tokenInput.value = '';
+            } catch (e) {
+                console.error('loadTwitchAuth error', e);
+            }
+        }
+        
+        async function saveTwitchAuth() {
+            const body = {
+                client_id: document.getElementById('tw-client-id').value || '',
+                client_secret: document.getElementById('tw-client-secret').value || '',
+                oauth_token: document.getElementById('tw-oauth-token').value || ''
+            };
+            try {
+                const res = await fetch('/api/twitch-auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(()=>({error: res.statusText}));
+                    alert('Failed to save Twitch auth: ' + (err.error || res.status));
+                    return;
+                }
+                alert('Twitch auth saved.');
+                loadTwitchAuth();
+            } catch (e) {
+                console.error('saveTwitchAuth error', e);
             }
         }
 
