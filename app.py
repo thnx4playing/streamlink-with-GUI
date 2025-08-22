@@ -1012,6 +1012,50 @@ def cancel_conversion_job(job_id):
     
     return jsonify({'message': 'Conversion job cancelled successfully'})
 
+@app.route('/api/conversion-jobs/<int:job_id>/remove-from-history', methods=['DELETE'])
+def remove_conversion_job_from_history(job_id):
+    """API endpoint to remove a conversion job from history (doesn't delete files)"""
+    job = ConversionJob.query.get_or_404(job_id)
+    
+    db.session.delete(job)
+    db.session.commit()
+    
+    return jsonify({'message': 'Conversion job removed from history successfully'})
+
+@app.route('/api/conversion-jobs/<int:job_id>/delete-file', methods=['DELETE'])
+def delete_converted_file(job_id):
+    """API endpoint to delete the converted file for a conversion job"""
+    job = ConversionJob.query.get_or_404(job_id)
+    
+    if not job.output_filename:
+        return jsonify({'error': 'No output file associated with this job'}), 400
+    
+    # Get the converted file path
+    converted_path = get_converted_path()
+    output_file = os.path.join(converted_path, job.output_filename)
+    
+    try:
+        if os.path.exists(output_file):
+            os.remove(output_file)
+            logger.info(f"Deleted converted file: {output_file}")
+            return jsonify({'message': 'Converted file deleted successfully'})
+        else:
+            return jsonify({'error': 'Converted file not found'}), 404
+    except Exception as e:
+        logger.error(f"Error deleting converted file {output_file}: {e}")
+        return jsonify({'error': f'Failed to delete converted file: {str(e)}'}), 500
+
+@app.route('/api/recordings/<int:recording_id>/remove-from-history', methods=['DELETE'])
+def remove_recording_from_history(recording_id):
+    """API endpoint to remove a recording from history (doesn't delete files)"""
+    recording = Recording.query.get_or_404(recording_id)
+    
+    # Mark as deleted in database but don't delete files
+    recording.status = 'deleted'
+    db.session.commit()
+    
+    return jsonify({'message': 'Recording removed from history successfully'})
+
 @app.route('/api/conversion-jobs/<int:job_id>/reschedule', methods=['POST'])
 def reschedule_conversion_job(job_id):
     """API endpoint to reschedule a conversion job"""
