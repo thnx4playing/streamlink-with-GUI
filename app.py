@@ -246,19 +246,19 @@ def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
         if auth.client_id:
             cmd += ["--http-header", f"Client-ID={auth.client_id}"]
 
-    # Version-safe stability flags (present in 7.1.3)
+    # Version-safe stability flags for 7.1.3+
     cmd += [
         "--retry-open", "3",
         "--retry-streams", "3",
-        "--stream-timeout", "60",
-        "--hls-segment-timeout", "20",
+        "--stream-timeout", "60",         # replaces deprecated --hls-timeout
+        "--stream-segment-timeout", "20", # replaces deprecated --hls-segment-timeout
         "--hls-live-edge", "3",
         "--hls-live-restart",
         "--ringbuffer-size", "16M",
     ]
 
-    # Sanitize user-specified extra flags: drop known-unsupported ones
-    DISALLOWED = {"--retry-delay", "--hls-timeout"}
+    # Sanitize user-specified extra flags: drop known-unsupported/deprecated ones on 7.1.3
+    DISALLOWED = {"--retry-delay", "--hls-timeout", "--hls-segment-timeout"}
     if auth and (auth.extra_flags or "").strip():
         parts = [p for p in auth.extra_flags.strip().split() if p]
         safe = []
