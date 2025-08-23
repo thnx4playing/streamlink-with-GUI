@@ -1006,8 +1006,25 @@
                                  </button>
                              </div>
                              <div class="card-body">
-                                 <div id="scheduled-tasks-list" class="border rounded p-3 bg-light">
-                                     <div class="text-center text-muted">No scheduled tasks</div>
+                                 <div class="table-responsive">
+                                     <table class="table table-hover">
+                                         <thead>
+                                             <tr>
+                                                 <th>Task Name</th>
+                                                 <th>Schedule Type</th>
+                                                 <th>Scheduled Time</th>
+                                                 <th>Last Run</th>
+                                                 <th>Status</th>
+                                                 <th>Progress</th>
+                                                 <th>Actions</th>
+                                             </tr>
+                                         </thead>
+                                         <tbody id="scheduled-tasks-list">
+                                             <tr>
+                                                 <td colspan="7" class="text-center text-muted">No scheduled tasks</td>
+                                             </tr>
+                                         </tbody>
+                                     </table>
                                  </div>
                              </div>
                          </div>
@@ -2002,8 +2019,7 @@
                 if (allJobs.length > 0) {
                     tasksList.innerHTML = '';
                     allJobs.forEach(job => {
-                        const div = document.createElement('div');
-                        div.className = 'd-flex justify-content-between align-items-center mb-2 p-2 border rounded bg-white';
+                        const row = document.createElement('tr');
                         
                         // Determine status badge color
                         let statusClass = 'bg-secondary';
@@ -2028,40 +2044,39 @@
                                 break;
                         }
                         
-                        const scheduledDate = job.scheduled_at ? formatDateEastern(job.scheduled_at) : 'No date';
-                        const lastRunDate = job.completed_at ? formatDateEastern(job.completed_at) : 
-                                           (job.started_at ? formatDateEastern(job.started_at) : 'Pending');
+                        const scheduledDate = job.scheduled_at ? formatDateEasternCompact(job.scheduled_at) : 'No date';
+                        const lastRunDate = job.completed_at ? formatDateEasternCompact(job.completed_at) : 
+                                           (job.started_at ? formatDateEasternCompact(job.started_at) : 'Pending');
                         const lastRunStatus = job.status === 'completed' ? 'Completed' : 
                                              (job.status === 'failed' ? 'Failed' : 
                                              (job.status === 'converting' ? 'Running' : 'Pending'));
                         
-                        div.innerHTML = `
-                            <div class="flex-grow-1">
-                                <div class="fw-bold small">${job.filename || 'Template Task'}</div>
-                                <div class="text-muted small">
-                                    ${job.scheduled_at ? `Scheduled: ${scheduledDate}` : 'No schedule'}
-                                    <br>Last Run: ${lastRunStatus === 'Pending' ? 'Pending' : `${lastRunDate} (${lastRunStatus})`}
-                                </div>
-                                <div class="text-info small">${job.schedule_type || 'Manual'}</div>
-                                ${job.progress ? `<div class="text-muted small">${job.progress}</div>` : ''}
-                            </div>
-                            <div class="d-flex flex-column align-items-end">
-                                <span class="badge ${statusClass} mb-1">${statusText}</span>
-                                <button class="btn btn-sm btn-link text-danger p-0" onclick="removeConversionJobFromHistory(${job.job_id})" 
+                        row.innerHTML = `
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${job.filename || 'Template Task'}">${job.filename || 'Template Task'}</td>
+                            <td>${job.schedule_type || 'Manual'}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${job.scheduled_at ? formatDateEastern(job.scheduled_at) : 'No schedule'}">${scheduledDate}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${lastRunStatus === 'Pending' ? 'Pending' : `${formatDateEastern(job.completed_at || job.started_at)} (${lastRunStatus})`}">${lastRunDate}</td>
+                            <td><span class="badge ${statusClass}">${statusText}</span></td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${job.progress || 'No progress info'}">${job.progress || 'No progress info'}</td>
+                            <td>
+                                <button class="btn btn-sm btn-outline-danger" onclick="removeConversionJobFromHistory(${job.job_id})" 
                                         title="Remove from history">
                                     <i class="fas fa-trash"></i>
                                 </button>
-                            </div>
+                            </td>
                         `;
-                        tasksList.appendChild(div);
+                        tasksList.appendChild(row);
                     });
+                    
+                    // Reinitialize tooltips for the new table rows
+                    initializeTooltips();
                 } else {
-                    tasksList.innerHTML = '<div class="text-center text-muted">No scheduled tasks</div>';
+                    tasksList.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No scheduled tasks</td></tr>';
                 }
             } catch (error) {
                 console.error('Error loading scheduled tasks:', error);
                 const tasksList = document.getElementById('scheduled-tasks-list');
-                tasksList.innerHTML = `<div class="text-center text-danger">Error loading scheduled tasks: ${error.message}</div>`;
+                tasksList.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error loading scheduled tasks: ${error.message}</td></tr>`;
             }
         }
 
