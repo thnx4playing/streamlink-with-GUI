@@ -17,7 +17,10 @@ COPY twitch_manager.py .
 COPY streamlink_manager.py .
 COPY notification_manager.py .
 COPY templates/ ./templates/
-COPY favicon.png .
+
+# Copy favicon (use favicon-new.png as fallback if favicon.png doesn't exist)
+COPY favicon*.png ./
+RUN if [ -f favicon.png ]; then echo "Using favicon.png"; else echo "favicon.png not found, using favicon-new.png"; mv favicon-new.png favicon.png 2>/dev/null || echo "No favicon files found"; fi
 
 # Create required directories
 RUN mkdir -p /app/download /app/data /app/config
