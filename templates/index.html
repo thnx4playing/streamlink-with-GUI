@@ -109,6 +109,46 @@
              text-overflow: ellipsis;
          }
          
+         /* Recent and Active Recordings table styling - prevent wrapping */
+         #recent-recordings-list td,
+         #active-recordings-list td {
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             max-width: 0; /* Forces text-overflow to work */
+         }
+         
+         /* Specific column widths for Recent/Active Recordings */
+         #recent-recordings-list td:nth-child(1), /* Streamer */
+         #active-recordings-list td:nth-child(1) {
+             max-width: 120px;
+         }
+         
+         #recent-recordings-list td:nth-child(2), /* Date */
+         #active-recordings-list td:nth-child(2) {
+             max-width: 100px;
+         }
+         
+         #recent-recordings-list td:nth-child(3), /* Title */
+         #active-recordings-list td:nth-child(3) {
+             max-width: 200px;
+         }
+         
+         #recent-recordings-list td:nth-child(4), /* Duration */
+         #active-recordings-list td:nth-child(4) {
+             max-width: 80px;
+         }
+         
+         #recent-recordings-list td:nth-child(5), /* Status */
+         #active-recordings-list td:nth-child(5) {
+             max-width: 100px;
+         }
+         
+         #recent-recordings-list td:nth-child(6), /* Actions */
+         #active-recordings-list td:nth-child(6) {
+             max-width: 80px;
+         }
+         
          .conversion-progress-table th:nth-child(2), /* Status */
          .conversion-progress-table td:nth-child(2) {
              width: 10%;
@@ -1247,11 +1287,12 @@
                     const duration = recording.duration ? formatDuration(recording.duration) : '-';
                     const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                     
+                    const titleText = `${recording.title || 'No title'}${recording.pid ? ` • pid ${recording.pid}` : ''}`;
                     row.innerHTML = `
-                        <td>${streamerName}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${streamerName}">${streamerName}</td>
                         <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEasternCompact(recording.started_at)}</td>
-                        <td>${recording.title || 'No title'}${recording.pid ? ` • pid ${recording.pid}` : ''}</td>
-                        <td>${duration}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${titleText}">${titleText}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${duration}">${duration}</td>
                         <td><span class="badge ${statusClass}">${status}</span></td>
                         <td>
                                                                  <button class="btn btn-sm btn-outline-danger" onclick="deleteRecording('${recording.filename}')" title="Delete recording file">
@@ -1609,11 +1650,12 @@
                     const duration = recording.duration ? formatDuration(recording.duration) : '-';
                     const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                     
+                    const titleText = recording.title || 'No title';
                     row.innerHTML = `
-                        <td>${streamerName}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${streamerName}">${streamerName}</td>
                         <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEasternCompact(recording.started_at)}</td>
-                        <td>${recording.title || 'No title'}</td>
-                        <td>${duration}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${titleText}">${titleText}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${duration}">${duration}</td>
                         <td><span class="badge bg-warning">RECORDING</span></td>
                         <td>
                             <button class="btn btn-sm btn-danger" onclick="stopRecording(${recording.id})" title="Stop recording">
