@@ -1595,7 +1595,21 @@ def process_conversions():
                     db.session.commit()
                     logger.error(f"Error in conversion job {job.id}: {e}")
             
-            time.sleep(10)  # Check for new jobs every 10 seconds
+            # Check if there are any manual conversions pending - if so, don't sleep
+            manual_pending = ConversionJob.query.filter(
+                db.and_(
+                    ConversionJob.status == 'pending',
+                    ConversionJob.schedule_type == 'manual',
+                    ConversionJob.scheduled_at.is_(None)
+                )
+            ).first()
+            
+            if manual_pending:
+                # Manual conversion pending, continue immediately
+                continue
+            else:
+                # No manual conversions pending, sleep for 10 seconds
+                time.sleep(10)
 
 def convert_ts_to_mp4(input_file, output_file, job):
     """Convert TS file to MP4 using FFmpeg"""
