@@ -1356,8 +1356,19 @@ def process_conversions():
             ready_jobs = ConversionJob.query.filter(
                 db.and_(
                     ConversionJob.status == 'pending', 
-                    ConversionJob.scheduled_at.isnot(None),
-                    ConversionJob.scheduled_at <= now
+                    db.or_(
+                        # Manual conversions (no scheduled time)
+                        db.and_(
+                            ConversionJob.schedule_type == 'manual',
+                            ConversionJob.scheduled_at.is_(None)
+                        ),
+                        # Scheduled conversions (with scheduled time that has passed)
+                        db.and_(
+                            ConversionJob.schedule_type != 'manual',
+                            ConversionJob.scheduled_at.isnot(None),
+                            ConversionJob.scheduled_at <= now
+                        )
+                    )
                 )
             ).all()
             
