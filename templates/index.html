@@ -468,8 +468,13 @@
                     </a>
                 </li>
                 <li class="nav-item">
+                    <a class="nav-link" href="#" onclick="showTab('settings')">
+                        <i class="fas fa-cog me-1"></i>Settings
+                    </a>
+                </li>
+                <li class="nav-item">
                     <a class="nav-link" href="#" onclick="showTab('conversion')">
-                        <i class="fas fa-cog me-1"></i>Conversion
+                        <i class="fas fa-exchange-alt me-1"></i>Conversion
                     </a>
                 </li>
             </ul>
@@ -804,6 +809,47 @@
         </div>
     </div>
 
+    <!-- Settings Tab -->
+    <div id="settings-tab" style="display: none;">
+        <div class="row">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fab fa-twitch me-2"></i>Twitch Authentication
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">Client ID</label>
+                                <input id="tw-client-id" type="text" class="form-control" placeholder="e.g. abc123xyz" autocomplete="off">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label">Client Secret</label>
+                                <input id="tw-client-secret" type="password" class="form-control" placeholder="••••••••" autocomplete="off">
+                            </div>
+                            <div class="col-md-12">
+                                <label class="form-label">OAuth Token</label>
+                                <input id="tw-oauth-token" type="password" class="form-control" placeholder="oauth:xxxxxxxx or token" autocomplete="off">
+                                <small class="text-muted">Paste your token (with or without the <code>oauth:</code> prefix). Stored locally in your DB.</small>
+                            </div>
+                            <div class="col-md-12">
+                                <label class="form-label">Extra Twitch Flags (optional)</label>
+                                <input id="tw-extra-flags" type="text" class="form-control" placeholder="e.g. --twitch-low-latency" autocomplete="off">
+                                <small class="text-muted">Pass raw flags to Streamlink. Useful for testing <code>--twitch-low-latency</code> or <code>--twitch-force-client-integrity</code>.</small>
+                            </div>
+                        </div>
+                        <div class="mt-3 d-flex gap-2">
+                            <button class="btn btn-primary" onclick="saveTwitchAuth()"><i class="fas fa-save me-1"></i>Save</button>
+                            <button class="btn btn-outline-secondary" onclick="loadTwitchAuth()"><i class="fas fa-sync me-1"></i>Reload</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Conversion Tab -->
     <div id="conversion-tab" style="display: none;">
         <div class="row">
@@ -945,38 +991,7 @@
                         </div>
                     </div>
 
-                    <!-- Twitch Authentication Settings -->
-                    <div class="card mt-3">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <span><i class="fab fa-twitch me-2"></i>Twitch Authentication</span>
-                        </div>
-                        <div class="card-body">
-                            <div class="row g-3">
-                                <div class="col-md-6">
-                                    <label class="form-label">Client ID</label>
-                                    <input id="tw-client-id" type="text" class="form-control" placeholder="e.g. abc123xyz" autocomplete="off">
-                                </div>
-                                <div class="col-md-6">
-                                    <label class="form-label">Client Secret</label>
-                                    <input id="tw-client-secret" type="password" class="form-control" placeholder="••••••••" autocomplete="off">
-                                </div>
-                                <div class="col-md-12">
-                                    <label class="form-label">OAuth Token</label>
-                                    <input id="tw-oauth-token" type="password" class="form-control" placeholder="oauth:xxxxxxxx or token" autocomplete="off">
-                                    <small class="text-muted">Paste your token (with or without the <code>oauth:</code> prefix). Stored locally in your DB.</small>
-                                </div>
-                                <div class="col-md-12">
-                                    <label class="form-label">Extra Twitch Flags (optional)</label>
-                                    <input id="tw-extra-flags" type="text" class="form-control" placeholder="e.g. --twitch-low-latency" autocomplete="off">
-                                    <small class="text-muted">Pass raw flags to Streamlink. Useful for testing <code>--twitch-low-latency</code> or <code>--twitch-force-client-integrity</code>.</small>
-                                </div>
-                            </div>
-                            <div class="mt-3 d-flex gap-2">
-                                <button class="btn btn-primary" onclick="saveTwitchAuth()"><i class="fas fa-save me-1"></i>Save</button>
-                                <button class="btn btn-outline-secondary" onclick="loadTwitchAuth()"><i class="fas fa-sync me-1"></i>Reload</button>
-                            </div>
-                        </div>
-                    </div>
+
                 </div>
 
                     <!-- Scheduled Conversions Tab -->
@@ -1502,12 +1517,15 @@
             
             // Hide all tabs
             const dashboardTab = document.getElementById('dashboard-tab');
+            const settingsTab = document.getElementById('settings-tab');
             const conversionTab = document.getElementById('conversion-tab');
             
             console.log('Found dashboard tab:', dashboardTab);
+            console.log('Found settings tab:', settingsTab);
             console.log('Found conversion tab:', conversionTab);
             
             dashboardTab.style.display = 'none';
+            settingsTab.style.display = 'none';
             conversionTab.style.display = 'none';
             
             // Show selected tab
@@ -1528,7 +1546,6 @@
                 loadConversionOptions();
                 refreshConversionProgress();
                 loadScheduledTasks();
-                loadTwitchAuth();
                 
                 // Set the default tab to Conversion Status
                 const conversionStatusTab = document.getElementById('conversion-status-tab');
@@ -1545,6 +1562,9 @@
                 // Activate Conversion Status tab
                 conversionStatusTab.classList.add('active');
                 conversionStatusContent.classList.add('show', 'active');
+            } else if (tabName === 'settings') {
+                console.log('Loading settings tab data...');
+                loadTwitchAuth();
             } else if (tabName === 'dashboard') {
                 console.log('Loading dashboard tab data...');
                 loadStreamers();
@@ -1953,9 +1973,9 @@
         async function loadRecordingsForConversion() {
             try {
                 console.log('=== loadRecordingsForConversion() called ===');
-                console.log('Fetching from: /api/recordings?per_page=50');
+                console.log('Fetching from: /api/recordings?per_page=50&conversion_only=true');
                 
-                const response = await fetch('/api/recordings?per_page=50');
+                const response = await fetch('/api/recordings?per_page=50&conversion_only=true');
                 console.log('Response status:', response.status);
                 console.log('Response ok:', response.ok);
                 
@@ -1975,19 +1995,14 @@
                 if (data.recordings && data.recordings.length > 0) {
                     console.log(`Found ${data.recordings.length} recordings, processing...`);
                     
-                                         // Only show .ts files (completed recordings)
-                     const validRecordings = data.recordings.filter(recording => 
-                         recording.filename && recording.filename.endsWith('.ts')
-                     );
+                                         console.log(`Found ${data.recordings.length} recordings for conversion`);
                     
-                    console.log(`Found ${validRecordings.length} valid recordings for conversion`);
-                    
-                    if (validRecordings.length === 0) {
+                    if (data.recordings.length === 0) {
                         tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No completed recordings found for conversion</td></tr>';
                         return;
                     }
                     
-                    validRecordings.forEach((recording, index) => {
+                    data.recordings.forEach((recording, index) => {
                         console.log(`Processing recording ${index + 1}:`, recording);
                         const row = document.createElement('tr');
                         const duration = recording.duration ? formatDuration(recording.duration) : '-';
