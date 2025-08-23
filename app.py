@@ -604,7 +604,11 @@ def favicon_ico():
     """Serve favicon.ico (browser default)"""
     logger.info("Favicon.ico requested")
     try:
-        return send_from_directory('.', 'favicon.png')
+        response = send_from_directory('.', 'favicon.png')
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
     except Exception as e:
         logger.error(f"Error serving favicon.ico: {e}")
         return '', 404
@@ -619,7 +623,11 @@ def favicon():
         favicon_path = os.path.join('.', 'favicon.png')
         logger.info(f"Favicon path: {favicon_path}")
         logger.info(f"File exists: {os.path.exists(favicon_path)}")
-        return send_from_directory('.', 'favicon.png')
+        response = send_from_directory('.', 'favicon.png')
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+        return response
     except Exception as e:
         logger.error(f"Error serving favicon.png: {e}")
         return '', 404
