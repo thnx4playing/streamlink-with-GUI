@@ -868,12 +868,18 @@
                             <div class="col-md-6">
                                 <label class="form-label">Client Secret</label>
                                 <input id="tw-client-secret" type="password" class="form-control" placeholder="••••••••" autocomplete="off">
+                                <div id="client-secret-status" class="form-text text-success" style="display: none;">
+                                    <i class="fas fa-check-circle me-1"></i>Client Secret has been saved
+                                </div>
                             </div>
-                            <div class="col-md-12">
-                                <label class="form-label">OAuth Token</label>
-                                <input id="tw-oauth-token" type="password" class="form-control" placeholder="oauth:xxxxxxxx or token" autocomplete="off">
-                                <small class="text-muted">Paste your token (with or without the <code>oauth:</code> prefix). Stored locally in your DB.</small>
-                            </div>
+                                                            <div class="col-md-12">
+                                    <label class="form-label">OAuth Token</label>
+                                    <input id="tw-oauth-token" type="password" class="form-control" placeholder="oauth:xxxxxxxx or token" autocomplete="off">
+                                    <div id="oauth-token-status" class="form-text text-success" style="display: none;">
+                                        <i class="fas fa-check-circle me-1"></i>OAuth Token has been saved
+                                    </div>
+                                    <small class="text-muted">Paste your token (with or without the <code>oauth:</code> prefix). Stored locally in your DB.</small>
+                                </div>
                             <div class="col-md-12">
                                 <label class="form-label">Extra Twitch Flags (optional)</label>
                                 <input id="tw-extra-flags" type="text" class="form-control" placeholder="e.g. --twitch-low-latency" autocomplete="off">
@@ -2296,6 +2302,22 @@
                 secretInput.value = '';
                 tokenInput.value = '';
                 document.getElementById('tw-extra-flags').value = data.extra_flags || '';
+                
+                // Show status indicators if values are present (masked responses indicate saved values)
+                const clientSecretStatus = document.getElementById('client-secret-status');
+                const oauthTokenStatus = document.getElementById('oauth-token-status');
+                
+                if (data.client_secret && data.client_secret.includes('•••')) {
+                    clientSecretStatus.style.display = 'block';
+                } else {
+                    clientSecretStatus.style.display = 'none';
+                }
+                
+                if (data.oauth_token && data.oauth_token.includes('•••')) {
+                    oauthTokenStatus.style.display = 'block';
+                } else {
+                    oauthTokenStatus.style.display = 'none';
+                }
             } catch (e) {
                 console.error('loadTwitchAuth error', e);
             }
@@ -2319,7 +2341,26 @@
                     alert('Failed to save Twitch auth: ' + (err.error || res.status));
                     return;
                 }
+                
+                // Show success message and update status indicators
                 alert('Twitch auth saved.');
+                
+                // Show status indicators for saved values
+                const clientSecretStatus = document.getElementById('client-secret-status');
+                const oauthTokenStatus = document.getElementById('oauth-token-status');
+                
+                if (body.client_secret) {
+                    clientSecretStatus.style.display = 'block';
+                }
+                if (body.oauth_token) {
+                    oauthTokenStatus.style.display = 'block';
+                }
+                
+                // Clear the input fields for security
+                document.getElementById('tw-client-secret').value = '';
+                document.getElementById('tw-oauth-token').value = '';
+                
+                // Reload to get the masked values
                 loadTwitchAuth();
             } catch (e) {
                 console.error('saveTwitchAuth error', e);
