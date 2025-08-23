@@ -1106,6 +1106,9 @@ def convert_recordings():
         except ValueError:
             return jsonify({'error': 'Invalid scheduled time format'}), 400
     
+    # Debug logging
+    logger.info(f"Conversion request - schedule_type: {schedule_type}, scheduled_time: {scheduled_time}, scheduled_datetime: {scheduled_datetime}")
+    
     for recording_id in recording_ids:
         # Check if conversion job already exists
         existing_job = ConversionJob.query.filter_by(recording_id=recording_id).first()

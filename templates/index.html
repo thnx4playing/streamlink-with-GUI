@@ -1811,6 +1811,8 @@
             // Hide scheduled time for manual conversions
             if (scheduleType === 'manual') {
                 scheduledTimeGroup.style.display = 'none';
+                // Clear scheduled time when switching to manual
+                document.getElementById('scheduled-time').value = '';
             } else {
                 scheduledTimeGroup.style.display = 'block';
             }
@@ -2316,6 +2318,12 @@
                 
                 // Apply schedule type visibility rules
                 toggleScheduleOptions();
+                
+                // Clear scheduled time if schedule type is manual
+                const scheduleType = document.getElementById('schedule-type').value;
+                if (scheduleType === 'manual') {
+                    document.getElementById('scheduled-time').value = '';
+                }
             } catch (error) {
                 console.error('Error loading conversion options:', error);
             }
