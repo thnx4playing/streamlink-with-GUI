@@ -1116,7 +1116,10 @@ def convert_recordings():
     # Start conversion process in background
     thread = threading.Thread(target=process_conversions, daemon=True)
     thread.start()
-    return jsonify({'message': f'Conversion scheduled for {scheduled_datetime}' if scheduled_datetime else 'Conversion scheduled'})
+    if schedule_type == 'manual':
+        return jsonify({'message': 'Manual conversion started'})
+    else:
+        return jsonify({'message': f'Conversion scheduled for {scheduled_datetime}' if scheduled_datetime else 'Conversion scheduled'})
 
 @app.route('/health')
 def health_check():

@@ -1086,6 +1086,7 @@
                                 <div class="mb-3">
                                     <label for="schedule-type" class="form-label fw-bold">Schedule Type</label>
                                     <select class="form-select" id="schedule-type" onchange="toggleScheduleOptions()">
+                                        <option value="manual">Manual</option>
                                         <option value="scheduled">Scheduled</option>
                                         <option value="daily">Daily</option>
                                         <option value="weekly">Weekly</option>
@@ -1807,8 +1808,12 @@
             const scheduleType = document.getElementById('schedule-type').value;
             const scheduledTimeGroup = document.getElementById('scheduled-time-group');
             
-            // Always show scheduled time since we removed immediate option
-            scheduledTimeGroup.style.display = 'block';
+            // Hide scheduled time for manual conversions
+            if (scheduleType === 'manual') {
+                scheduledTimeGroup.style.display = 'none';
+            } else {
+                scheduledTimeGroup.style.display = 'block';
+            }
         }
 
         // Global variable for conversion progress pagination
@@ -2304,10 +2309,13 @@
                 if (savedOptions) {
                     const options = JSON.parse(savedOptions);
                     
-                    document.getElementById('schedule-type').value = options.schedule_type || 'scheduled';
+                    document.getElementById('schedule-type').value = options.schedule_type || 'manual';
                     document.getElementById('scheduled-time').value = options.scheduled_time || '';
                     document.getElementById('conversion-custom-filename').value = options.custom_filename || '';
                 }
+                
+                // Apply schedule type visibility rules
+                toggleScheduleOptions();
             } catch (error) {
                 console.error('Error loading conversion options:', error);
             }
@@ -2401,22 +2409,23 @@
                 return;
             }
             
-                         // Get conversion options
-             const scheduleType = document.getElementById('schedule-type').value;
-             const scheduledTime = document.getElementById('scheduled-time').value;
-             const customFilename = document.getElementById('conversion-custom-filename').value;
+            // Get conversion options
+            const scheduleType = document.getElementById('schedule-type').value;
+            const scheduledTime = document.getElementById('scheduled-time').value;
+            const customFilename = document.getElementById('conversion-custom-filename').value;
             
-            if (!scheduledTime) {
+            // For manual conversions, we don't need a scheduled time
+            if (scheduleType !== 'manual' && !scheduledTime) {
                 alert('Please select a scheduled time for conversion');
                 return;
             }
             
-                         const conversionData = {
-                 recording_ids: recordingIds,
-                 schedule_type: scheduleType,
-                 custom_filename: customFilename,
-                 scheduled_time: new Date(scheduledTime).toISOString()
-             };
+            const conversionData = {
+                recording_ids: recordingIds,
+                schedule_type: scheduleType,
+                custom_filename: customFilename,
+                scheduled_time: scheduleType === 'manual' ? null : new Date(scheduledTime).toISOString()
+            };
             
             try {
                 const response = await fetch('/api/convert-recordings', {
