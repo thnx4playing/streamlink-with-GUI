@@ -604,31 +604,31 @@ def favicon_ico():
     """Serve favicon.ico (browser default)"""
     logger.info("Favicon.ico requested")
     try:
-        return send_from_directory('.', 'favicon-new.png')
+        return send_from_directory('.', 'favicon.png')
     except Exception as e:
         logger.error(f"Error serving favicon.ico: {e}")
         return '', 404
 
-@app.route('/favicon-new.png')
+@app.route('/favicon.png')
 def favicon():
     """Serve favicon"""
-    logger.info("Favicon-new.png requested")
+    logger.info("Favicon.png requested")
     try:
         # Check if file exists
         import os
-        favicon_path = os.path.join('.', 'favicon-new.png')
+        favicon_path = os.path.join('.', 'favicon.png')
         logger.info(f"Favicon path: {favicon_path}")
         logger.info(f"File exists: {os.path.exists(favicon_path)}")
-        return send_from_directory('.', 'favicon-new.png')
+        return send_from_directory('.', 'favicon.png')
     except Exception as e:
-        logger.error(f"Error serving favicon-new.png: {e}")
+        logger.error(f"Error serving favicon.png: {e}")
         return '', 404
 
 @app.route('/test-favicon')
 def test_favicon():
     """Test route to check favicon file"""
     import os
-    favicon_path = os.path.join('.', 'favicon-new.png')
+    favicon_path = os.path.join('.', 'favicon.png')
     return jsonify({
         'favicon_path': favicon_path,
         'file_exists': os.path.exists(favicon_path),
