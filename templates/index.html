@@ -994,6 +994,23 @@
                                  </nav>
                              </div>
                          </div>
+
+                         <!-- Scheduled Tasks Section -->
+                         <div class="card mt-4">
+                             <div class="card-header d-flex justify-content-between align-items-center">
+                                 <h5 class="mb-0">
+                                     <i class="fas fa-clock me-2"></i>Scheduled Tasks
+                                 </h5>
+                                 <button class="btn btn-sm btn-outline-primary" onclick="loadScheduledTasks()">
+                                     <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                                 </button>
+                             </div>
+                             <div class="card-body">
+                                 <div id="scheduled-tasks-list" class="border rounded p-3 bg-light">
+                                     <div class="text-center text-muted">No scheduled tasks</div>
+                                 </div>
+                             </div>
+                         </div>
                     </div>
 
                     <!-- Conversion Settings Tab -->
@@ -1069,14 +1086,6 @@
                                 <button type="button" class="btn btn-primary" onclick="saveConversionOptions()">
                                     <i class="fas fa-save me-1"></i>Save Options
                                 </button>
-                                
-                                <!-- Scheduled Tasks Display -->
-                                <div class="mt-4">
-                                    <h6 class="fw-bold text-muted">Scheduled Tasks</h6>
-                                    <div id="scheduled-tasks-list" class="border rounded p-3 bg-light">
-                                        <div class="text-center text-muted">No scheduled tasks</div>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
