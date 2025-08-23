@@ -230,36 +230,50 @@ def _normalize_twitch_token(raw: str) -> str:
 
 def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
     """
-    Build a Streamlink CLI that is compatible across versions:
-      - Twitch auth via header + cookie (per docs)
-      - Conservative, widely-supported retry / timeout flags
+    Build a Streamlink CLI compatible with v7.1.3 (your image):
+      • Twitch auth via header + cookie
+      • Version-safe retry/timeout flags
+      • Never include unsupported flags (we also sanitize Extra Flags)
     """
     cmd = ["streamlink", "--loglevel", "info"]
 
-    # HTTP/Twitch auth (modern, per docs)
+    # Auth (per Streamlink Twitch plugin docs)
     if auth:
         tok = _normalize_twitch_token(auth.oauth_token or "")
         if tok:
-            # one argv containing a space is fine when passing a list to Popen
             cmd += [f"--twitch-api-header=Authorization=OAuth {tok}"]
             cmd += ["--http-cookie", f"auth-token={tok}"]
         if auth.client_id:
             cmd += ["--http-header", f"Client-ID={auth.client_id}"]
 
-    # Version-safe resiliency flags (supported across 3.x–7.x)
-    # - DO NOT use --retry-delay / --retry-max / --hls-timeout here (not universal)
+    # Version-safe stability flags (present in 7.1.3)
     cmd += [
-        "--retry-open", "3",           # retry fetching streams
-        "--retry-streams", "3",        # retry stream selection
-        "--stream-timeout", "60",      # abort if no data for 60s
-        "--hls-segment-timeout", "20", # per-segment download timeout
-        "--hls-live-edge", "3",        # buffer 3 segments to reduce stalls
-        "--ringbuffer-size", "16M",    # smooths over short hiccups
+        "--retry-open", "3",
+        "--retry-streams", "3",
+        "--stream-timeout", "60",
+        "--hls-segment-timeout", "20",
+        "--hls-live-edge", "3",
+        "--hls-live-restart",
+        "--ringbuffer-size", "16M",
     ]
 
-    # Allow user to append extra flags from Settings (optional)
-    if auth and auth.extra_flags:
-        cmd += [p for p in auth.extra_flags.strip().split(" ") if p]
+    # Sanitize user-specified extra flags: drop known-unsupported ones
+    DISALLOWED = {"--retry-delay", "--hls-timeout"}
+    if auth and (auth.extra_flags or "").strip():
+        parts = [p for p in auth.extra_flags.strip().split() if p]
+        safe = []
+        skip_next = False
+        for i, p in enumerate(parts):
+            if skip_next:
+                skip_next = False
+                continue
+            if p in DISALLOWED:
+                # most disallowed flags expect a value next; drop it too
+                skip_next = True
+                continue
+            safe.append(p)
+        if safe:
+            cmd += safe
 
     # URL, quality, output
     cmd += [f"https://twitch.tv/{username}", "best", "-o", f"{ts_out_path}.ts"]
@@ -1675,6 +1689,15 @@ if __name__ == '__main__':
     logger.info(f"DOWNLOAD_VOLUME_PATH: {os.getenv('DOWNLOAD_VOLUME_PATH', 'Not set')}")
     logger.info(f"DATA_VOLUME_PATH: {os.getenv('DATA_VOLUME_PATH', 'Not set')}")
     logger.info(f"CONFIG_VOLUME_PATH: {os.getenv('CONFIG_VOLUME_PATH', 'Not set')}")
+    
+    # Log streamlink version once for troubleshooting
+    try:
+        import shutil, subprocess
+        if shutil.which("streamlink"):
+            v = subprocess.check_output(["streamlink", "--version"], text=True).strip()
+            logger.info("Detected %s", v)
+    except Exception as e:
+        logger.warning("Could not read streamlink --version: %s", e)
     
     # List contents of data directory
     try:
