@@ -1839,9 +1839,15 @@
                                            conversion.status === 'failed' ? 'bg-danger' : 
                                            conversion.status === 'converting' ? 'bg-warning' : 'bg-secondary';
                          
+                         // Show "Queued" for manual jobs that are pending
+                         let statusText = conversion.status.toUpperCase();
+                         if (conversion.status === 'pending' && conversion.schedule_type === 'manual') {
+                             statusText = 'QUEUED';
+                         }
+                         
                          row.innerHTML = `
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.filename}">${conversion.filename}</td>
-                             <td><span class="badge ${statusClass}">${conversion.status.toUpperCase()}</span></td>
+                             <td><span class="badge ${statusClass}">${statusText}</span></td>
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress || 'No progress info'}">${conversion.progress || 'No progress info'}</td>
                              <td>${conversion.schedule_type || 'immediate'}</td>
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.output_filename || '-'}">${conversion.output_filename || '-'}</td>
@@ -2417,22 +2423,11 @@
                 return;
             }
             
-            // Get conversion options
-            const scheduleType = document.getElementById('schedule-type').value;
-            const scheduledTime = document.getElementById('scheduled-time').value;
             const customFilename = document.getElementById('conversion-custom-filename').value;
-            
-            // For manual conversions, we don't need a scheduled time
-            if (scheduleType !== 'manual' && !scheduledTime) {
-                alert('Please select a scheduled time for conversion');
-                return;
-            }
-            
             const conversionData = {
                 recording_ids: recordingIds,
-                schedule_type: scheduleType,
-                custom_filename: customFilename,
-                scheduled_time: scheduleType === 'manual' ? null : new Date(scheduledTime).toISOString()
+                schedule_type: 'manual',
+                custom_filename: customFilename
             };
             
             try {
@@ -2446,7 +2441,7 @@
                 
                 if (response.ok) {
                     const result = await response.json();
-                    alert(result.message || 'Conversion scheduled successfully!');
+                    alert(result.message || 'Conversion started.');
                     
                     // Refresh progress and scheduled tasks
                     refreshConversionProgress();
@@ -2456,7 +2451,7 @@
                     recordingIds.forEach(id => {
                         const statusBadge = document.getElementById(`conversion-status-${id}`);
                         if (statusBadge) {
-                            statusBadge.textContent = 'Scheduled';
+                            statusBadge.textContent = 'Queued';
                             statusBadge.className = 'badge bg-warning';
                         }
                     });
@@ -2466,11 +2461,13 @@
                     document.getElementById('select-all-recordings').checked = false;
                     updateConvertButton();
                 } else {
-                    alert('Error scheduling conversion');
+                    const errorData = await response.json().catch(() => ({}));
+                    const errorMessage = errorData.error || 'Unknown error';
+                    alert('Error converting recordings: ' + errorMessage);
                 }
             } catch (error) {
                 console.error('Error converting recordings:', error);
-                alert('Error converting recordings');
+                alert('Error converting recordings: ' + error.message);
             }
         }
 

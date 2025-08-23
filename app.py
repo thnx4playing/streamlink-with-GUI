@@ -1076,7 +1076,7 @@ def convert_recordings():
     """API endpoint to start conversion of recordings"""
     data = request.get_json()
     recording_ids = data.get('recording_ids', [])
-    schedule_type = data.get('schedule_type', 'scheduled')  # scheduled, daily, weekly, custom
+    schedule_type = data.get('schedule_type', 'manual')  # manual, scheduled, daily, weekly
     scheduled_time = data.get('scheduled_time')  # ISO format string
     custom_filename = data.get('custom_filename', '')  # Custom filename template
     
@@ -1105,6 +1105,9 @@ def convert_recordings():
             scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
         except ValueError:
             return jsonify({'error': 'Invalid scheduled time format'}), 400
+    if not scheduled_datetime and schedule_type == 'manual':
+        # Immediate conversion: queue to run right away
+        scheduled_datetime = datetime.utcnow()
     
     # Debug logging
     logger.info(f"Conversion request - schedule_type: {schedule_type}, scheduled_time: {scheduled_time}, scheduled_datetime: {scheduled_datetime}")
@@ -1127,9 +1130,12 @@ def convert_recordings():
     # The conversion process runs in a background thread started at app startup
     # No need to start a new thread for each conversion request
     if schedule_type == 'manual':
-        return jsonify({'message': 'Manual conversion started'})
+        msg = 'Conversion queued to start now'
+    elif scheduled_datetime:
+        msg = f'Conversion scheduled for {scheduled_datetime}'
     else:
-        return jsonify({'message': f'Conversion scheduled for {scheduled_datetime}' if scheduled_datetime else 'Conversion scheduled'})
+        msg = 'Conversion scheduled'
+    return jsonify({'message': msg})
 
 @app.route('/health')
 def health_check():
