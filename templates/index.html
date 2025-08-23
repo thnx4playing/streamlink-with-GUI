@@ -1183,6 +1183,18 @@
             });
         }
 
+        // Helper function to format date in Eastern Time (compact version for Recent Recordings)
+        function formatDateEasternCompact(dateString) {
+            const date = new Date(dateString);
+            return date.toLocaleString('en-US', {
+                timeZone: 'America/New_York',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
                  // Helper function to determine recording status
          function getRecordingStatus(recording) {
              if (recording.filename && recording.filename.endsWith('.part')) {
@@ -1237,7 +1249,7 @@
                     
                     row.innerHTML = `
                         <td>${streamerName}</td>
-                        <td>${formatDateEastern(recording.started_at)}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEasternCompact(recording.started_at)}</td>
                         <td>${recording.title || 'No title'}${recording.pid ? ` • pid ${recording.pid}` : ''}</td>
                         <td>${duration}</td>
                         <td><span class="badge ${statusClass}">${status}</span></td>
@@ -1252,6 +1264,9 @@
                     `;
                     tbody.appendChild(row);
                 });
+                
+                // Reinitialize tooltips for the new table rows
+                initializeTooltips();
             } catch (error) {
                 console.error('Error loading recent recordings:', error);
                 const tbody = document.getElementById('recent-recordings-list');
@@ -1596,7 +1611,7 @@
                     
                     row.innerHTML = `
                         <td>${streamerName}</td>
-                        <td>${formatDateEastern(recording.started_at)}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEasternCompact(recording.started_at)}</td>
                         <td>${recording.title || 'No title'}</td>
                         <td>${duration}</td>
                         <td><span class="badge bg-warning">RECORDING</span></td>
@@ -1608,6 +1623,9 @@
                     `;
                     tbody.appendChild(row);
                 });
+                
+                // Reinitialize tooltips for the new table rows
+                initializeTooltips();
             } catch (error) {
                 console.error('Error loading active recordings:', error);
                 const tbody = document.getElementById('active-recordings-list');
