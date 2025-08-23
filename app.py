@@ -1124,9 +1124,8 @@ def convert_recordings():
     
     db.session.commit()
     
-    # Start conversion process in background
-    thread = threading.Thread(target=process_conversions, daemon=True)
-    thread.start()
+    # The conversion process runs in a background thread started at app startup
+    # No need to start a new thread for each conversion request
     if schedule_type == 'manual':
         return jsonify({'message': 'Manual conversion started'})
     else:
