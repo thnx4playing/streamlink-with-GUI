@@ -700,9 +700,14 @@
                               <h5 class="mb-0">
                                   <i class="fas fa-broadcast-tower me-2"></i>Active Recordings
                               </h5>
-                              <button class="btn btn-sm btn-outline-secondary" onclick="refreshActiveRecordings()">
-                                  <i class="fas fa-sync-alt refresh-btn"></i> Refresh
-                              </button>
+                              <div>
+                                  <button class="btn btn-sm btn-outline-primary me-2" onclick="showActiveRecordingsModal()">
+                                      View All
+                                  </button>
+                                  <button class="btn btn-sm btn-outline-secondary" onclick="refreshActiveRecordings()">
+                                      <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                                  </button>
+                              </div>
                           </div>
                                                      <div class="card-body">
                                <div class="table-responsive">
@@ -1002,6 +1007,9 @@
                                     <button class="btn btn-sm btn-primary me-2" onclick="convertSelectedRecordings()" id="convert-btn" disabled>
                                         <i class="fas fa-cog me-1"></i>Convert Selected
                                     </button>
+                                    <button class="btn btn-sm btn-outline-primary me-2" onclick="showRecordingsForConversionModal()">
+                                        View All
+                                    </button>
                                     <button class="btn btn-sm btn-outline-primary" onclick="refreshRecordingsForConversion()">
                                         <i class="fas fa-sync-alt refresh-btn"></i> Refresh
                                     </button>
@@ -1230,6 +1238,87 @@
                             </div>
                             <nav>
                                 <ul class="pagination justify-content-center" id="conversion-progress-modal-pagination">
+                                    <!-- Pagination will be generated here -->
+                                </ul>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Active Recordings Modal -->
+            <div class="modal fade" id="activeRecordingsModal" tabindex="-1">
+                <div class="modal-dialog modal-xl">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">All Active Recordings</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>Streamer</th>
+                                            <th>Date</th>
+                                            <th>Stream Title</th>
+                                            <th>Duration</th>
+                                            <th>Status</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="active-recordings-modal-table">
+                                        <!-- Active recordings will be loaded here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <nav>
+                                <ul class="pagination justify-content-center" id="active-recordings-modal-pagination">
+                                    <!-- Pagination will be generated here -->
+                                </ul>
+                            </nav>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recordings for Conversion Modal -->
+            <div class="modal fade" id="recordingsForConversionModal" tabindex="-1">
+                <div class="modal-dialog modal-xl">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">All Recordings for Conversion</h5>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-primary" id="convert-btn-modal" onclick="convertSelectedRecordingsModal()" disabled>
+                                    <i class="fas fa-cog me-1"></i>Convert Selected
+                                </button>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                        </div>
+                        <div class="modal-body">
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>
+                                                <input type="checkbox" id="select-all-recordings-modal" onchange="toggleAllRecordingsModal()">
+                                            </th>
+                                            <th>Streamer</th>
+                                            <th>Title</th>
+                                            <th>Status</th>
+                                            <th>Started</th>
+                                            <th>Duration</th>
+                                            <th>File Size</th>
+                                            <th>Conversion Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recordings-for-conversion-modal-table">
+                                        <!-- Recordings for conversion will be loaded here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                            <nav>
+                                <ul class="pagination justify-content-center" id="recordings-for-conversion-modal-pagination">
                                     <!-- Pagination will be generated here -->
                                 </ul>
                             </nav>
@@ -1634,6 +1723,18 @@
             new bootstrap.Modal(document.getElementById('recordingsModal')).show();
         }
 
+        // Show active recordings modal
+        function showActiveRecordingsModal() {
+            loadActiveRecordingsModal(1);
+            new bootstrap.Modal(document.getElementById('activeRecordingsModal')).show();
+        }
+
+        // Show recordings for conversion modal
+        function showRecordingsForConversionModal() {
+            loadRecordingsForConversionModal(1);
+            new bootstrap.Modal(document.getElementById('recordingsForConversionModal')).show();
+        }
+
         // Load recordings with pagination (View All modal)
         async function loadRecordings(page) {
             try {
@@ -1872,6 +1973,159 @@
         function showConversionProgressModal() {
             loadConversionProgressModal(1);
             new bootstrap.Modal(document.getElementById('conversionProgressModal')).show();
+        }
+
+        // Load active recordings modal with pagination (View All modal)
+        async function loadActiveRecordingsModal(page) {
+            try {
+                const response = await fetch(`/api/active-recordings?page=${page}&per_page=10`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('active-recordings-modal-table');
+                tbody.innerHTML = '';
+                
+                if (data.recordings && data.recordings.length > 0) {
+                    data.recordings.forEach((recording) => {
+                        const row = document.createElement('tr');
+                        const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                        const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
+                        
+                        const titleText = escapeHTML(recording.title || 'No title');
+                        row.innerHTML = `
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeHTML(streamerName)}">${escapeHTML(streamerName)}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEasternCompact(recording.started_at)}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${titleText}">${titleText}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${duration}">${duration}</td>
+                            <td><span class="badge bg-warning">RECORDING</span></td>
+                            <td>
+                                <button class="btn btn-sm btn-danger" onclick="stopRecording(${recording.id})" title="Stop recording">
+                                    <i class="fas fa-stop"></i>
+                                </button>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                    
+                    // Reinitialize tooltips for the new table rows
+                    initializeTooltips();
+                    
+                    // Update pagination
+                    updateActiveRecordingsModalPagination(data.current_page, data.pages, data.total);
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No active recordings</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading active recordings modal:', error);
+                const tbody = document.getElementById('active-recordings-modal-table');
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Error loading recordings</td></tr>';
+            }
+        }
+
+        // Update active recordings modal pagination
+        function updateActiveRecordingsModalPagination(currentPage, totalPages, total) {
+            const pagination = document.getElementById('active-recordings-modal-pagination');
+            pagination.innerHTML = '';
+            
+            if (totalPages <= 1) return; // Don't show pagination for single page
+            
+            // Previous button
+            const prevLi = document.createElement('li');
+            prevLi.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a class="page-link" href="#" onclick="loadActiveRecordingsModal(${currentPage - 1})">Previous</a>`;
+            pagination.appendChild(prevLi);
+            
+            // Page numbers
+            for (let i = 1; i <= totalPages; i++) {
+                const li = document.createElement('li');
+                li.className = `page-item ${i === currentPage ? 'active' : ''}`;
+                li.innerHTML = `<a class="page-link" href="#" onclick="loadActiveRecordingsModal(${i})">${i}</a>`;
+                pagination.appendChild(li);
+            }
+            
+            // Next button
+            const nextLi = document.createElement('li');
+            nextLi.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a class="page-link" href="#" onclick="loadActiveRecordingsModal(${currentPage + 1})">Next</a>`;
+            pagination.appendChild(nextLi);
+        }
+
+        // Load recordings for conversion modal with pagination (View All modal)
+        async function loadRecordingsForConversionModal(page) {
+            try {
+                const response = await fetch(`/api/recordings?page=${page}&per_page=10&conversion_only=true`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('recordings-for-conversion-modal-table');
+                tbody.innerHTML = '';
+                
+                if (data.recordings && data.recordings.length > 0) {
+                    data.recordings.forEach((recording, index) => {
+                        const row = document.createElement('tr');
+                        const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                        const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
+                        const status = getRecordingStatus(recording);
+                        const statusClass = getStatusBadgeClass(status);
+                        
+                        row.innerHTML = `
+                            <td>
+                                <input type="checkbox" class="recording-checkbox-modal" value="${recording.id}" onchange="updateConvertButtonModal()">
+                            </td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeHTML(recording.streamer_name || recording.streamer_id)}">${escapeHTML(recording.streamer_name || recording.streamer_id)}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeHTML(recording.title || 'No title')}">${escapeHTML(recording.title || 'No title')}</td>
+                            <td>
+                                <span class="badge ${statusClass}">${status}</span>
+                            </td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEastern(recording.started_at)}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${duration}">${duration}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${fileSize}">${fileSize}</td>
+                            <td>
+                                <span class="badge bg-secondary" id="conversion-status-${recording.id}">Not Converted</span>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                    
+                    // Initialize tooltips for the new table rows
+                    initializeTooltips();
+                    
+                    // Update pagination
+                    updateRecordingsForConversionModalPagination(data.current_page, data.pages, data.total);
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recordings found</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading recordings for conversion modal:', error);
+                const tbody = document.getElementById('recordings-for-conversion-modal-table');
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-danger">Error loading recordings</td></tr>';
+            }
+        }
+
+        // Update recordings for conversion modal pagination
+        function updateRecordingsForConversionModalPagination(currentPage, totalPages, total) {
+            const pagination = document.getElementById('recordings-for-conversion-modal-pagination');
+            pagination.innerHTML = '';
+            
+            if (totalPages <= 1) return; // Don't show pagination for single page
+            
+            // Previous button
+            const prevLi = document.createElement('li');
+            prevLi.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a class="page-link" href="#" onclick="loadRecordingsForConversionModal(${currentPage - 1})">Previous</a>`;
+            pagination.appendChild(prevLi);
+            
+            // Page numbers
+            for (let i = 1; i <= totalPages; i++) {
+                const li = document.createElement('li');
+                li.className = `page-item ${i === currentPage ? 'active' : ''}`;
+                li.innerHTML = `<a class="page-link" href="#" onclick="loadRecordingsForConversionModal(${i})">${i}</a>`;
+                pagination.appendChild(li);
+            }
+            
+            // Next button
+            const nextLi = document.createElement('li');
+            nextLi.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a class="page-link" href="#" onclick="loadRecordingsForConversionModal(${currentPage + 1})">Next</a>`;
+            pagination.appendChild(nextLi);
         }
 
         // Load conversion progress modal with pagination (View All modal)

@@ -494,6 +494,8 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
         conversion_logger.info(f"FFmpeg process completed with return code: {rc}")
         if rc == 0 and os.path.exists(mp4_path):
             conversion_logger.info(f"Conversion completed successfully: {os.path.basename(mp4_path)}")
+            # Set the output filename for the job
+            job.output_filename = os.path.basename(mp4_path)
             if job.delete_original and os.path.exists(ts_path):
                 try: 
                     os.remove(ts_path)
