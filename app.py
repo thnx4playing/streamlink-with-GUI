@@ -87,21 +87,6 @@ with app.app_context():
     except Exception as e:
         app.logger.warning(f"SQLite PRAGMA init failed: {e}")
 
-def _ensure_conversion_settings_columns():
-    """Add ffmpeg_preset column if not present (SQLite compatible)"""
-    try:
-        cols = [r[1] for r in db.session.execute(text("PRAGMA table_info(conversion_settings)")).fetchall()]
-        if "ffmpeg_preset" not in cols:
-            db.session.execute(text("ALTER TABLE conversion_settings ADD COLUMN ffmpeg_preset VARCHAR(64) NOT NULL DEFAULT :d"), {"d": DEFAULT_FFMPEG_PRESET_KEY})
-            db.session.commit()
-            logger.info("Added ffmpeg_preset column to conversion_settings table")
-    except Exception as e:
-        logger.warning(f"Schema migration failed: {e}")
-
-# Run schema migration within app context
-with app.app_context():
-    _ensure_conversion_settings_columns()
-
 # --- FFmpeg Presets used by the conversion worker ---
 FFMPEG_PRESETS = {
     "default_h264_aac": {
@@ -131,6 +116,21 @@ FFMPEG_PRESETS = {
     },
 }
 DEFAULT_FFMPEG_PRESET_KEY = "default_h264_aac"
+
+def _ensure_conversion_settings_columns():
+    """Add ffmpeg_preset column if not present (SQLite compatible)"""
+    try:
+        cols = [r[1] for r in db.session.execute(text("PRAGMA table_info(conversion_settings)")).fetchall()]
+        if "ffmpeg_preset" not in cols:
+            db.session.execute(text("ALTER TABLE conversion_settings ADD COLUMN ffmpeg_preset VARCHAR(64) NOT NULL DEFAULT :d"), {"d": DEFAULT_FFMPEG_PRESET_KEY})
+            db.session.commit()
+            logger.info("Added ffmpeg_preset column to conversion_settings table")
+    except Exception as e:
+        logger.warning(f"Schema migration failed: {e}")
+
+# Run schema migration within app context
+with app.app_context():
+    _ensure_conversion_settings_columns()
 
 # Database Models
 class Streamer(db.Model):
