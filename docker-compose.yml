@@ -27,12 +27,6 @@ services:
       - quality=best
     ports:
       - "8080:8080"
-    healthcheck:
-      test: ["CMD", "pgrep", "-f", "python.*app.py"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
 
   ffmpeg:
     <<: *common

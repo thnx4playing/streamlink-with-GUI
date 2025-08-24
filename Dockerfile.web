@@ -43,9 +43,7 @@ EXPOSE 8080
 ENV PORT=8080
 ENV DOWNLOAD_PATH=/app/download
 
-# Health check - simple process check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD pgrep -f "python.*app.py" || exit 1
+
 
 # Run the web application
 CMD ["python", "app.py"]
