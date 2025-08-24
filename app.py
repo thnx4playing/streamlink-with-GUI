@@ -518,6 +518,8 @@ def template_scheduler_loop():
         while True:
             try:
                 now = _utcnow()
+                logger.info(f"Template scheduler: checking for due templates at {now}")
+                
                 # Templates due to run now
                 due = (db.session.query(ConversionJob)
                        .filter(ConversionJob.recording_id.is_(None))
@@ -527,6 +529,10 @@ def template_scheduler_loop():
                        .filter(ConversionJob.scheduled_at <= now)
                        .order_by(ConversionJob.id.asc())
                        .all())
+                
+                logger.info(f"Template scheduler: found {len(due)} due templates")
+                for tpl in due:
+                    logger.info(f"Template {tpl.id}: type={tpl.schedule_type}, scheduled_at={tpl.scheduled_at}, status={tpl.status}")
 
                 if not due:
                     time.sleep(1)
@@ -540,6 +546,7 @@ def template_scheduler_loop():
                     )
 
                     ready = ready_query.all()
+                    logger.info(f"Template {tpl.id}: found {len(ready)} completed recordings available for conversion")
                     created = 0
                     for rec in ready:
                         # Skip if there's already an active/completed job for this recording
@@ -573,8 +580,9 @@ def template_scheduler_loop():
                         tpl.status = 'pending'
 
                     db.session.commit()
-                    if created:
-                        logger.info(f"Template {tpl.id}: spawned {created} conversion jobs")
+                    logger.info(f"Template {tpl.id}: spawned {created} conversion jobs")
+                    if created == 0:
+                        logger.info(f"Template {tpl.id}: no jobs created - all recordings may already have active conversion jobs")
 
             except Exception as e:
                 logger.exception(f"Template scheduler error: {e}")
