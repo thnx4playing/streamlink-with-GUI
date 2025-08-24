@@ -534,10 +534,6 @@ def template_scheduler_loop():
                 for tpl in due:
                     logger.info(f"Template {tpl.id}: type={tpl.schedule_type}, scheduled_at={tpl.scheduled_at}, status={tpl.status}")
 
-                if not due:
-                    time.sleep(30)  # Check every 30 seconds instead of every second
-                    continue
-
                 for tpl in due:
                     # Pick recordings that look "ready to convert"
                     ready_query = (
@@ -583,6 +579,9 @@ def template_scheduler_loop():
                     logger.info(f"Template {tpl.id}: spawned {created} conversion jobs")
                     if created == 0:
                         logger.info(f"Template {tpl.id}: no jobs created - all recordings may already have active conversion jobs")
+
+                # Sleep after processing (whether there were due templates or not)
+                time.sleep(30)  # Check every 30 seconds
 
             except Exception as e:
                 logger.exception(f"Template scheduler error: {e}")
