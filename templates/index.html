@@ -1283,6 +1283,25 @@
              });
          }
 
+         // Hide all tooltips function
+         function hideAllTooltips() {
+             document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
+                 const t = bootstrap.Tooltip.getInstance(el);
+                 if (t) t.hide();
+             });
+         }
+
+         // Hide lingering tooltips on mouseleave
+         document.addEventListener('mouseleave', (e) => {
+             if (e.target.matches('[data-bs-toggle="tooltip"]')) {
+                 const t = bootstrap.Tooltip.getInstance(e.target);
+                 if (t) t.hide();
+             }
+         }, true);
+
+         // Hide tooltips on scroll
+         document.addEventListener('scroll', hideAllTooltips, true);
+
         // Load streamers with real-time status checking
         async function loadStreamers() {
             try {
@@ -1616,6 +1635,10 @@
                 const data = await response.json();
                 
                 const tbody = document.getElementById('recordings-table');
+                
+                // Hide all tooltips before refreshing table
+                hideAllTooltips();
+                
                 tbody.innerHTML = '';
                 
                 // Store recordings data for bulk operations
@@ -2252,6 +2275,10 @@
                 const data = await response.json();
                  
                  const tbody = document.getElementById('conversion-progress-list');
+                 
+                 // Hide all tooltips before refreshing table
+                 hideAllTooltips();
+                 
                  tbody.innerHTML = '';
                  
                  if (data.conversions && data.conversions.length > 0) {
@@ -2549,6 +2576,10 @@
                 
                 const tbody = document.getElementById('conversion-recordings-table');
                 console.log('Found tbody element:', tbody);
+                
+                // Hide all tooltips before refreshing table
+                hideAllTooltips();
+                
                 tbody.innerHTML = '';
                 
                 if (data.recordings && data.recordings.length > 0) {

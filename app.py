@@ -176,7 +176,7 @@ class ConversionJob(db.Model):
     progress = db.Column(db.String(255))
     output_filename = db.Column(db.String(500))
     scheduled_at = db.Column(db.DateTime)  # New: scheduled time
-    started_at = db.Column(db.DateTime, default=datetime.utcnow)
+    started_at = db.Column(db.DateTime, nullable=True)
     completed_at = db.Column(db.DateTime)
     schedule_type = db.Column(db.String(20))  # New: immediate, daily, weekly, custom
     custom_filename = db.Column(db.String(500))  # New: custom filename for this job
