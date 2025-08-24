@@ -160,23 +160,28 @@ def get_converted_path():
 def _utcnow():
     return datetime.utcnow()
 
-def _eligible_conversion_jobs(session, batch_size=3):
+def _eligible_conversion_jobs(batch_size=3):
     """Return next chunk of conversion jobs that should run now."""
     now = _utcnow()
-    return (ConversionJob.query
-            .filter(ConversionJob.status == 'pending')
-            .filter(
-                db.or_(
-                    # Immediate jobs: run regardless of scheduled_at
-                    ConversionJob.schedule_type == 'immediate',
-                    # Scheduled jobs: run when due
-                    db.and_(ConversionJob.schedule_type != 'immediate',
-                            ConversionJob.scheduled_at <= now)
-                )
+    return (
+        ConversionJob.query
+        .filter(ConversionJob.status == 'pending')
+        .filter(
+            db.or_(
+                # Manual/immediate jobs: run regardless of scheduled_at
+                ConversionJob.schedule_type.in_(['manual', 'immediate']),
+                # Scheduled jobs: run when due
+                db.and_(
+                    ConversionJob.schedule_type.notin_(['manual', 'immediate']),
+                    ConversionJob.scheduled_at.isnot(None),
+                    ConversionJob.scheduled_at <= now,
+                ),
             )
-            .order_by(ConversionJob.created_at.asc())
-            .limit(batch_size)
-            .all())
+        )
+        .order_by(ConversionJob.created_at.asc())
+        .limit(batch_size)
+        .all()
+    )
 
 def _update_job_progress(job, text):
     job.progress = text
@@ -240,20 +245,32 @@ def _convert_single_job(job: "ConversionJob"):
             db.session.rollback()
 
 def conversion_worker_loop():
-    logger.info("Conversion worker: started")
-    while True:
+    """Run in a daemon thread with an active Flask app context."""
+    ctx = app.app_context()
+    ctx.push()
+    logger.info("Conversion worker: started (app context bound)")
+    try:
+        while True:
+            try:
+                jobs = _eligible_conversion_jobs()
+                if not jobs:
+                    # Sleep lightly but allow immediate wake-up when new jobs are queued
+                    conversion_wakeup.wait(timeout=5)
+                    conversion_wakeup.clear()
+                    continue
+                for job in jobs:
+                    _convert_single_job(job)
+            except Exception as e:
+                logger.exception("Conversion worker loop error: %s", e)
+                time.sleep(2)
+            finally:
+                # Ensure each iteration has a clean session (thread-safe)
+                db.session.remove()
+    finally:
         try:
-            jobs = _eligible_conversion_jobs(db.session)
-            if not jobs:
-                # Sleep lightly but allow immediate wake-up when new jobs are queued
-                conversion_wakeup.wait(timeout=5)
-                conversion_wakeup.clear()
-                continue
-            for job in jobs:
-                _convert_single_job(job)
-        except Exception as e:
-            logger.exception(f"Conversion worker loop error: {e}")
-            time.sleep(2)
+            ctx.pop()
+        except Exception:
+            pass
 
 def get_recording_status(recording):
     """Determine the actual status of a recording based on file existence and extension"""
