@@ -509,7 +509,7 @@
                 </li>
                 <li class="nav-item">
                     <a class="nav-link" href="#" onclick="showTab('settings')">
-                        <i class="fas fa-cog me-1"></i>Settings
+                        <i class="fas fa-cog me-1"></i>Twitch Settings
                     </a>
                 </li>
                 <li class="nav-item">
@@ -818,13 +818,21 @@
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">All Recordings</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-danger" id="bulk-delete-btn" onclick="bulkDeleteRecordings()" disabled>
+                            <i class="fas fa-trash me-1"></i>Delete Selected
+                        </button>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
                 </div>
                 <div class="modal-body">
                     <div class="table-responsive">
                         <table class="table table-hover">
                             <thead>
                                 <tr>
+                                    <th>
+                                        <input type="checkbox" id="select-all-recordings-modal" onchange="toggleAllRecordingsModal()">
+                                    </th>
                                     <th>Streamer</th>
                                     <th>Title</th>
                                     <th>Status</th>
@@ -864,6 +872,9 @@
                             <div class="col-md-6">
                                 <label class="form-label">Client ID</label>
                                 <input id="tw-client-id" type="text" class="form-control" placeholder="e.g. abc123xyz" autocomplete="off">
+                                <div id="client-id-status" class="form-text text-success" style="display: none;">
+                                    <i class="fas fa-check-circle me-1"></i>Client ID has been saved
+                                </div>
                             </div>
                             <div class="col-md-6">
                                 <label class="form-label">Client Secret</label>
@@ -1515,7 +1526,10 @@
                 const tbody = document.getElementById('recordings-table');
                 tbody.innerHTML = '';
                 
-                data.recordings.forEach(recording => {
+                // Store recordings data for bulk operations
+                window.currentRecordingsData = data.recordings;
+                
+                data.recordings.forEach((recording, index) => {
                     const row = document.createElement('tr');
                     const duration = recording.duration ? formatDuration(recording.duration) : '-';
                     const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
@@ -1524,6 +1538,9 @@
                     const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                     
                     row.innerHTML = `
+                        <td>
+                            <input type="checkbox" class="recording-checkbox-modal" value="${index}" onchange="updateBulkDeleteButton()">
+                        </td>
                         <td>${streamerName}</td>
                         <td>${recording.title || 'No title'}</td>
                         <td>
@@ -1592,6 +1609,97 @@
             const sizes = ['Bytes', 'KB', 'MB', 'GB'];
             const i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // Toggle all recordings in modal
+        function toggleAllRecordingsModal() {
+            const selectAllCheckbox = document.getElementById('select-all-recordings-modal');
+            const checkboxes = document.querySelectorAll('.recording-checkbox-modal');
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+            });
+            
+            updateBulkDeleteButton();
+        }
+
+        // Update bulk delete button state
+        function updateBulkDeleteButton() {
+            const checkboxes = document.querySelectorAll('.recording-checkbox-modal:checked');
+            const bulkDeleteBtn = document.getElementById('bulk-delete-btn');
+            
+            if (checkboxes.length > 0) {
+                bulkDeleteBtn.disabled = false;
+                bulkDeleteBtn.textContent = `Delete Selected (${checkboxes.length})`;
+            } else {
+                bulkDeleteBtn.disabled = true;
+                bulkDeleteBtn.innerHTML = '<i class="fas fa-trash me-1"></i>Delete Selected';
+            }
+        }
+
+        // Bulk delete recordings
+        async function bulkDeleteRecordings() {
+            const checkboxes = document.querySelectorAll('.recording-checkbox-modal:checked');
+            const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            
+            if (selectedIndices.length === 0) {
+                alert('Please select recordings to delete');
+                return;
+            }
+            
+            const confirmMessage = `Are you sure you want to delete ${selectedIndices.length} recording(s)? This action cannot be undone.`;
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+            
+            try {
+                // Delete recordings one by one
+                let successCount = 0;
+                let errorCount = 0;
+                
+                for (const index of selectedIndices) {
+                    try {
+                        const recording = window.currentRecordingsData[index];
+                        if (recording) {
+                            // Delete the recording
+                            const deleteResponse = await fetch('/api/recordings/delete', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ filename: recording.filename })
+                            });
+                            
+                            if (deleteResponse.ok) {
+                                successCount++;
+                            } else {
+                                errorCount++;
+                            }
+                        } else {
+                            errorCount++;
+                        }
+                    } catch (error) {
+                        console.error('Error deleting recording:', error);
+                        errorCount++;
+                    }
+                }
+                
+                // Show results
+                if (successCount > 0) {
+                    alert(`Successfully deleted ${successCount} recording(s)${errorCount > 0 ? `. ${errorCount} failed.` : ''}`);
+                    
+                    // Refresh the modal data
+                    loadRecordings(currentPage);
+                    
+                    // Refresh dashboard data
+                    loadRecentRecordings();
+                    loadStatus();
+                } else {
+                    alert('Failed to delete any recordings');
+                }
+                
+            } catch (error) {
+                console.error('Error in bulk delete:', error);
+                alert('Error performing bulk delete operation');
+            }
         }
 
         // Refresh status
@@ -2420,8 +2528,15 @@
                 document.getElementById('tw-extra-flags').value = data.extra_flags || '';
                 
                 // Show status indicators if values are present (masked responses indicate saved values)
+                const clientIdStatus = document.getElementById('client-id-status');
                 const clientSecretStatus = document.getElementById('client-secret-status');
                 const oauthTokenStatus = document.getElementById('oauth-token-status');
+                
+                if (data.client_id && data.client_id.includes('•••')) {
+                    clientIdStatus.style.display = 'block';
+                } else {
+                    clientIdStatus.style.display = 'none';
+                }
                 
                 if (data.client_secret && data.client_secret.includes('•••')) {
                     clientSecretStatus.style.display = 'block';
@@ -2462,9 +2577,13 @@
                 alert('Twitch auth saved.');
                 
                 // Show status indicators for saved values
+                const clientIdStatus = document.getElementById('client-id-status');
                 const clientSecretStatus = document.getElementById('client-secret-status');
                 const oauthTokenStatus = document.getElementById('oauth-token-status');
                 
+                if (body.client_id) {
+                    clientIdStatus.style.display = 'block';
+                }
                 if (body.client_secret) {
                     clientSecretStatus.style.display = 'block';
                 }
