@@ -145,6 +145,8 @@ recording_threads = {}
 recording_stop_flags = {}  # {recording_id: threading.Event()}
 recording_procinfo = {}   # {recording_id: {"pid": int, "proc": Popen, "stop_flag": threading.Event}}
 active_by_streamer = {}   # {streamer_id: recording_id}
+conversion_worker_thread = None
+conversion_wakeup = threading.Event()
 
 def get_download_path():
     """Get the download path from environment or use default"""
@@ -154,6 +156,104 @@ def get_converted_path():
     """Get the converted files path from environment or use default"""
     # Always use the internal container path for converted files
     return '/app/converted'
+
+def _utcnow():
+    return datetime.utcnow()
+
+def _eligible_conversion_jobs(session, batch_size=3):
+    """Return next chunk of conversion jobs that should run now."""
+    now = _utcnow()
+    return (ConversionJob.query
+            .filter(ConversionJob.status == 'pending')
+            .filter(
+                db.or_(
+                    # Manual jobs: run regardless of scheduled_at
+                    ConversionJob.schedule_type == 'manual',
+                    # Scheduled jobs: run when due
+                    db.and_(ConversionJob.schedule_type != 'manual',
+                            ConversionJob.scheduled_at <= now)
+                )
+            )
+            .order_by(ConversionJob.created_at.asc())
+            .limit(batch_size)
+            .all())
+
+def _update_job_progress(job, text):
+    job.progress = text
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+def _convert_single_job(job: "ConversionJob"):
+    # Resolve paths & validations (kept defensive)
+    rec = Recording.query.get(job.recording_id) if job.recording_id else None
+    if not rec:
+        job.status = 'failed'
+        _update_job_progress(job, 'Recording not found')
+        return
+    # Only finalized .ts (no .part)
+    ts_path = os.path.join(get_download_path(), f"{rec.filename}.ts")
+    part_path = os.path.join(get_download_path(), f"{rec.filename}.ts.part")
+    if (not os.path.exists(ts_path)) or os.path.exists(part_path) or rec.status in ('deleted','failed','recording'):
+        job.status = 'failed'
+        _update_job_progress(job, 'Source not eligible')
+        return
+    out_dir = get_converted_path()
+    base_name = job.custom_filename.strip() if job.custom_filename else rec.filename
+    mp4_path = os.path.join(out_dir, f"{base_name}.mp4")
+    # Build ffmpeg cmd
+    cmd = ["ffmpeg", "-y", "-i", ts_path, "-c", "copy", "-movflags", "+faststart", mp4_path]
+    job.status = 'converting'
+    job.started_at = _utcnow()
+    _update_job_progress(job, "Starting ffmpeg…")
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # read a few lines to keep UI alive
+        last_line = ''
+        while True:
+            line = proc.stdout.readline()
+            if not line and proc.poll() is not None:
+                break;
+            if line:
+                last_line = line.strip()
+                if 'time=' in last_line or 'frame=' in last_line:
+                    _update_job_progress(job, last_line[-120:])
+        rc = proc.wait()
+        if rc == 0 and os.path.exists(mp4_path):
+            job.status = 'completed'
+            _update_job_progress(job, f"Done: {os.path.basename(mp4_path)}")
+            if job.delete_original and os.path.exists(ts_path):
+                try: os.remove(ts_path)
+                except Exception: pass
+        else:
+            job.status = 'failed'
+            _update_job_progress(job, f"ffmpeg failed (rc={rc})")
+    except Exception as e:
+        job.status = 'failed'
+        _update_job_progress(job, f"Exception: {e}")
+    finally:
+        job.completed_at = _utcnow()
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+def conversion_worker_loop():
+    logger.info("Conversion worker: started")
+    while True:
+        try:
+            jobs = _eligible_conversion_jobs(db.session)
+            if not jobs:
+                # Sleep lightly but allow immediate wake-up when new jobs are queued
+                conversion_wakeup.wait(timeout=5)
+                conversion_wakeup.clear()
+                continue
+            for job in jobs:
+                _convert_single_job(job)
+        except Exception as e:
+            logger.exception(f"Conversion worker loop error: {e}")
+            time.sleep(2)
 
 def get_recording_status(recording):
     """Determine the actual status of a recording based on file existence and extension"""
@@ -1105,9 +1205,9 @@ def convert_recordings():
             scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
         except ValueError:
             return jsonify({'error': 'Invalid scheduled time format'}), 400
-    if not scheduled_datetime and schedule_type == 'manual':
-        # Immediate conversion: queue to run right away
-        scheduled_datetime = datetime.utcnow()
+    if schedule_type == 'manual':
+        # Immediate conversion: queue for "now"
+        scheduled_datetime = scheduled_datetime or _utcnow()
     
     # Debug logging
     logger.info(f"Conversion request - schedule_type: {schedule_type}, scheduled_time: {scheduled_time}, scheduled_datetime: {scheduled_datetime}")
@@ -1127,8 +1227,9 @@ def convert_recordings():
     
     db.session.commit()
     
-    # The conversion process runs in a background thread started at app startup
-    # No need to start a new thread for each conversion request
+    # Nudge the background worker
+    conversion_wakeup.set()
+    
     if schedule_type == 'manual':
         msg = 'Conversion queued to start now'
     elif scheduled_datetime:
@@ -1355,266 +1456,7 @@ def create_schedule_template():
         db.session.rollback()
         return jsonify({'error': f'Failed to create schedule template: {str(e)}'}), 500
 
-def process_conversions():
-    """Background function to process conversions using FFmpeg"""
-    with app.app_context():
-        while True:
-            # Get jobs that are ready to process (pending and scheduled)
-            now = datetime.utcnow()
-            ready_jobs = ConversionJob.query.filter(
-                db.and_(
-                    ConversionJob.status == 'pending', 
-                    db.or_(
-                        # Manual conversions (no scheduled time)
-                        db.and_(
-                            ConversionJob.schedule_type == 'manual',
-                            ConversionJob.scheduled_at.is_(None)
-                        ),
-                        # Scheduled conversions (with scheduled time that has passed)
-                        db.and_(
-                            ConversionJob.schedule_type != 'manual',
-                            ConversionJob.scheduled_at.isnot(None),
-                            ConversionJob.scheduled_at <= now
-                        )
-                    )
-                )
-            ).all()
-            
-            for job in ready_jobs:
-                try:
-                    # Handle template jobs (jobs without recording_id) - convert all files in download directory
-                    if not job.recording_id:
-                        job.status = 'converting'
-                        job.progress = 'Processing all files in download directory...'
-                        job.started_at = datetime.utcnow()
-                        db.session.commit()
-                        
-                        # Get all TS files in download directory
-                        download_path = get_download_path()
-                        ts_files = []
-                        if os.path.exists(download_path):
-                            for file in os.listdir(download_path):
-                                if file.endswith('.ts'):
-                                    ts_files.append(file)
-                        
-                        if not ts_files:
-                            job.status = 'completed'
-                            job.progress = 'No TS files found in download directory'
-                            job.completed_at = datetime.utcnow()
-                            db.session.commit()
-                            continue
-                        
-                        # Get conversion settings
-                        settings = ConversionSettings.query.first()
-                        if not settings:
-                            settings = ConversionSettings()
-                            db.session.add(settings)
-                            db.session.commit()
-                        
-                        # Process each TS file
-                        converted_count = 0
-                        failed_count = 0
-                        
-                        for ts_file in ts_files:
-                            try:
-                                # Find corresponding recording
-                                filename_without_ext = ts_file[:-3]  # Remove .ts extension
-                                recording = Recording.query.filter_by(filename=filename_without_ext).first()
-                                
-                                if not recording:
-                                    # Skip files without corresponding recording
-                                    continue
-                                
-                                # Check if already converted
-                                existing_job = ConversionJob.query.filter_by(
-                                    recording_id=recording.id, 
-                                    status='completed'
-                                ).first()
-                                
-                                if existing_job:
-                                    # Already converted, skip
-                                    continue
-                                
-                                # Build output filename
-                                if job.custom_filename:
-                                    output_filename = build_custom_filename(job.custom_filename, recording)
-                                elif settings.custom_filename_template:
-                                    output_filename = build_custom_filename(settings.custom_filename_template, recording)
-                                else:
-                                    output_filename = build_output_filename(recording, 'streamer_date_title')
-                                
-                                # Get paths
-                                input_file = os.path.join(download_path, ts_file)
-                                converted_path = get_converted_path()
-                                os.makedirs(converted_path, exist_ok=True)
-                                output_file = os.path.join(converted_path, output_filename)
-                                
-                                # Check if output already exists
-                                if os.path.exists(output_file):
-                                    continue
-                                
-                                # Convert file
-                                success = convert_ts_to_mp4(input_file, output_file, None)  # No job object for batch processing
-                                
-                                if success:
-                                    # Create conversion job record for this file
-                                    file_job = ConversionJob(
-                                        recording_id=recording.id,
-                                        status='completed',
-                                        progress='Converted by scheduled task',
-                                        output_filename=output_filename,
-                                        started_at=datetime.utcnow(),
-                                        completed_at=datetime.utcnow(),
-                                        schedule_type=job.schedule_type,
-                                        custom_filename=job.custom_filename,
-                                        delete_original=settings.delete_original_after_conversion  # Use global setting
-                                    )
-                                    db.session.add(file_job)
-                                    
-                                    # Delete original if requested
-                                    if settings.delete_original_after_conversion and os.path.exists(input_file):
-                                        try:
-                                            os.remove(input_file)
-                                            logger.info(f"Deleted original file: {input_file}")
-                                        except Exception as e:
-                                            logger.error(f"Failed to delete original file {input_file}: {e}")
-                                    
-                                    converted_count += 1
-                                else:
-                                    failed_count += 1
-                                    
-                            except Exception as e:
-                                logger.error(f"Error processing {ts_file}: {e}")
-                                failed_count += 1
-                        
-                        # Update template job status
-                        job.status = 'completed'
-                        job.progress = f'Batch conversion completed: {converted_count} converted, {failed_count} failed'
-                        job.completed_at = datetime.utcnow()
-                        
-                        # Handle recurring tasks
-                        if job.schedule_type in ['daily', 'weekly']:
-                            # Calculate next run time
-                            if job.schedule_type == 'daily':
-                                next_run = job.scheduled_at + timedelta(days=1)
-                            else:  # weekly
-                                next_run = job.scheduled_at + timedelta(weeks=1)
-                            
-                            # Create next recurring job
-                            next_job = ConversionJob(
-                                recording_id=None,  # Template job
-                                schedule_type=job.schedule_type,
-                                scheduled_at=next_run,
-                                custom_filename=job.custom_filename,
-                                delete_original=job.delete_original,
-                                status='pending'
-                            )
-                            db.session.add(next_job)
-                            logger.info(f"Created next {job.schedule_type} recurring job for {next_run}")
-                        
-                        db.session.commit()
-                        continue
-                    
-                    job.status = 'converting'
-                    job.progress = 'Starting conversion...'
-                    job.started_at = datetime.utcnow()
-                    db.session.commit()
-                    
-                    # Get recording details
-                    recording = Recording.query.get(job.recording_id)
-                    if not recording:
-                        job.status = 'failed'
-                        job.progress = 'Recording not found'
-                        db.session.commit()
-                        continue
-                    
-                    # Get conversion settings
-                    settings = ConversionSettings.query.first()
-                    if not settings:
-                        settings = ConversionSettings()
-                        db.session.add(settings)
-                        db.session.commit()
-                    
-                    # Build output filename (use custom filename if provided)
-                    if job.custom_filename:
-                        output_filename = build_custom_filename(job.custom_filename, recording)
-                    elif settings.custom_filename_template:
-                        output_filename = build_custom_filename(settings.custom_filename_template, recording)
-                    else:
-                        # Fallback to default naming scheme
-                        output_filename = build_output_filename(recording, 'streamer_date_title')
-                    
-                    # Get input and output paths
-                    download_path = get_download_path()
-                    input_file = os.path.join(download_path, f"{recording.filename}.ts")
-                    
-                    # Use converted directory for output
-                    converted_path = get_converted_path()
-                    os.makedirs(converted_path, exist_ok=True)
-                    output_file = os.path.join(converted_path, output_filename)
-                    
-                    # Check if input file exists
-                    if not os.path.exists(input_file):
-                        job.status = 'failed'
-                        job.progress = f'Input file not found: {input_file}'
-                        db.session.commit()
-                        continue
-                    
-                    # Check if output file already exists
-                    if os.path.exists(output_file):
-                        job.status = 'failed'
-                        job.progress = f'Output file already exists: {output_filename}'
-                        db.session.commit()
-                        continue
-                    
-                    # Update progress
-                    job.progress = 'Converting TS to MP4 using FFmpeg...'
-                    db.session.commit()
-                    
-                    # Run FFmpeg conversion
-                    success = convert_ts_to_mp4(input_file, output_file, job)
-                    
-                    if success:
-                        job.status = 'completed'
-                        job.progress = 'Conversion completed successfully'
-                        job.output_filename = output_filename
-                        job.completed_at = datetime.utcnow()
-                        db.session.commit()
-                        logger.info(f"Successfully converted {input_file} to {output_file}")
-                        
-                        # Delete original file if requested
-                        if job.delete_original and os.path.exists(input_file):
-                            try:
-                                os.remove(input_file)
-                                logger.info(f"Deleted original file: {input_file}")
-                            except Exception as e:
-                                logger.error(f"Failed to delete original file {input_file}: {e}")
-                    else:
-                        job.status = 'failed'
-                        job.progress = 'FFmpeg conversion failed'
-                        db.session.commit()
-                    
-                except Exception as e:
-                    job.status = 'failed'
-                    job.progress = f'Error: {str(e)}'
-                    db.session.commit()
-                    logger.error(f"Error in conversion job {job.id}: {e}")
-            
-            # Check if there are any manual conversions pending - if so, don't sleep
-            manual_pending = ConversionJob.query.filter(
-                db.and_(
-                    ConversionJob.status == 'pending',
-                    ConversionJob.schedule_type == 'manual',
-                    ConversionJob.scheduled_at.is_(None)
-                )
-            ).first()
-            
-            if manual_pending:
-                # Manual conversion pending, continue immediately
-                continue
-            else:
-                # No manual conversions pending, sleep for 10 seconds
-                time.sleep(10)
+
 
 def convert_ts_to_mp4(input_file, output_file, job):
     """Convert TS file to MP4 using FFmpeg"""
@@ -1907,13 +1749,11 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Error starting recording threads: {e}")
     
-    # Start conversion processing thread
-    try:
-        conversion_thread = threading.Thread(target=process_conversions, daemon=True)
-        conversion_thread.start()
-        logger.info("Conversion processing thread started")
-    except Exception as e:
-        logger.error(f"Error starting conversion thread: {e}")
+    # Start conversion worker once
+    if not conversion_worker_thread or not conversion_worker_thread.is_alive():
+        conversion_worker_thread = threading.Thread(target=conversion_worker_loop, name="conv-worker", daemon=True)
+        conversion_worker_thread.start()
+        logger.info("Conversion worker thread started")
     
     # Get port from environment or use non-standard port
     port = int(os.getenv('PORT', 8080))

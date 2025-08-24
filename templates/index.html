@@ -1821,12 +1821,15 @@
         // Global variable for conversion progress pagination
         let conversionProgressPage = 1;
 
-                 // Refresh conversion progress
-         async function refreshConversionProgress(page = 1) {
-             try {
-                 conversionProgressPage = page;
-                 const response = await fetch(`/api/conversion-progress?page=${page}&per_page=10`);
-                 const data = await response.json();
+                         // Global variable for conversion polling
+        let conversionPoll;
+        
+        // Refresh conversion progress
+        async function refreshConversionProgress(page = 1) {
+            try {
+                conversionProgressPage = page;
+                const response = await fetch(`/api/conversion-progress?page=${page}&per_page=10`);
+                const data = await response.json();
                  
                  const tbody = document.getElementById('conversion-progress-list');
                  tbody.innerHTML = '';
@@ -1848,7 +1851,7 @@
                          row.innerHTML = `
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.filename}">${conversion.filename}</td>
                              <td><span class="badge ${statusClass}">${statusText}</span></td>
-                             <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress || 'No progress info'}">${conversion.progress || 'No progress info'}</td>
+                             <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? 'Queued…' : '—')}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? 'Queued…' : '—')}</td>
                              <td>${conversion.schedule_type || 'immediate'}</td>
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.output_filename || '-'}">${conversion.output_filename || '-'}</td>
                              <td>
@@ -1878,6 +1881,15 @@
                      
                      // Update pagination
                      updateConversionProgressPagination(data.current_page, data.pages, data.total);
+                     
+                     // Set up polling for active jobs
+                     const hasActive = (data.conversions || []).some(j => j.status === 'pending' || j.status === 'converting');
+                     if (hasActive && !conversionPoll) {
+                         conversionPoll = setInterval(() => refreshConversionProgress(conversionProgressPage), 5000);
+                     } else if (!hasActive && conversionPoll) {
+                         clearInterval(conversionPoll);
+                         conversionPoll = null;
+                     }
                  } else {
                      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No conversion jobs found</td></tr>';
                      // Clear pagination
