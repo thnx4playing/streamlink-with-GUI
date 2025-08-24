@@ -100,8 +100,15 @@
          }
          
          /* Conversion Progress table column widths */
-         .conversion-progress-table th:nth-child(1), /* Filename */
+         .conversion-progress-table th:nth-child(1), /* Checkbox */
          .conversion-progress-table td:nth-child(1) {
+             width: 5%;
+             max-width: 40px;
+             text-align: center;
+         }
+         
+         .conversion-progress-table th:nth-child(2), /* Filename */
+         .conversion-progress-table td:nth-child(2) {
              width: 20%;
              max-width: 200px;
              white-space: nowrap;
@@ -149,14 +156,14 @@
              max-width: 80px;
          }
          
-         .conversion-progress-table th:nth-child(2), /* Status */
-         .conversion-progress-table td:nth-child(2) {
+         .conversion-progress-table th:nth-child(3), /* Status */
+         .conversion-progress-table td:nth-child(3) {
              width: 10%;
              max-width: 100px;
          }
          
-         .conversion-progress-table th:nth-child(3), /* Progress */
-         .conversion-progress-table td:nth-child(3) {
+         .conversion-progress-table th:nth-child(4), /* Progress */
+         .conversion-progress-table td:nth-child(4) {
              width: 25%;
              max-width: 250px;
              white-space: nowrap;
@@ -164,23 +171,23 @@
              text-overflow: ellipsis;
          }
          
-         .conversion-progress-table th:nth-child(4), /* Schedule Type */
-         .conversion-progress-table td:nth-child(4) {
+         .conversion-progress-table th:nth-child(5), /* Schedule Type */
+         .conversion-progress-table td:nth-child(5) {
              width: 12%;
              max-width: 120px;
          }
          
-         .conversion-progress-table th:nth-child(5), /* Output File */
-         .conversion-progress-table td:nth-child(5) {
-             width: 25%;
-             max-width: 250px;
+         .conversion-progress-table th:nth-child(6), /* Output File */
+         .conversion-progress-table td:nth-child(6) {
+             width: 20%;
+             max-width: 200px;
              white-space: nowrap;
              overflow: hidden;
              text-overflow: ellipsis;
          }
          
-         .conversion-progress-table th:nth-child(6), /* Actions */
-         .conversion-progress-table td:nth-child(6) {
+         .conversion-progress-table th:nth-child(7), /* Actions */
+         .conversion-progress-table td:nth-child(7) {
              width: 8%;
              max-width: 80px;
              text-align: center;
@@ -422,10 +429,18 @@
               padding-top: 0;
           }
           
-          /* Tooltip styling for table cells */
-          .conversion-progress-table td[title] {
-              cursor: help;
-          }
+                   /* Tooltip styling for table cells */
+         .conversion-progress-table td[title] {
+             cursor: help;
+         }
+         
+         /* Ensure all conversion progress table cells stay on one line */
+         .conversion-progress-table td {
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             max-width: 0; /* Forces text-overflow to work */
+         }
          
          /* Badge styling */
          .badge {
