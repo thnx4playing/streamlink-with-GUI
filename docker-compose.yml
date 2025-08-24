@@ -16,7 +16,7 @@ services:
     image: ghcr.io/liofal/streamlink:3.3.4
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.web
     env_file: 
         # - ../global.env    
         - default.env
@@ -25,6 +25,14 @@ services:
     environment:
       - user=${TWITCH}
       - quality=best
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
 
   ffmpeg:
     <<: *common

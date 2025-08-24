@@ -1655,6 +1655,11 @@ def health_check():
     """Health check endpoint for Docker"""
     return jsonify({'status': 'healthy'})
 
+@app.route('/')
+def index():
+    """Serve the main page"""
+    return render_template('index.html')
+
 @app.route('/api/twitch-auth', methods=['GET'])
 def get_twitch_auth():
     ta = TwitchAuth.query.first()
