@@ -722,6 +722,11 @@
                                        </tbody>
                                    </table>
                                </div>
+                               <nav>
+                                   <ul class="pagination justify-content-center" id="active-recordings-pagination">
+                                       <!-- Pagination will be generated here -->
+                                   </ul>
+                               </nav>
                            </div>
                       </div>
                   </div>
@@ -1024,6 +1029,11 @@
                                         </tbody>
                                     </table>
                                 </div>
+                                <nav>
+                                    <ul class="pagination justify-content-center" id="conversion-recordings-pagination">
+                                        <!-- Pagination will be generated here -->
+                                    </ul>
+                                </nav>
                             </div>
                         </div>
 
@@ -1244,7 +1254,7 @@
     <script>
         // Global variables
         let currentPage = 1;
-        const perPage = 20;
+        const perPage = 6;
 
                  // Initialize the application
          document.addEventListener('DOMContentLoaded', function() {
@@ -1427,13 +1437,13 @@
         // Load recent recordings
         async function loadRecentRecordings() {
             try {
-                const response = await fetch('/api/recordings?per_page=5');
+                const response = await fetch('/api/recordings?per_page=6&include_converted=true');
                 const data = await response.json();
                 
                 const tbody = document.getElementById('recent-recordings-list');
                 
-                // Only show the first 5 recordings
-                const recentRecordings = data.recordings.slice(0, 5);
+                // Show all 6 recordings (no slicing needed since API returns exactly 6)
+                const recentRecordings = data.recordings;
                 
                 if (recentRecordings.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No recordings found</td></tr>';
@@ -1631,7 +1641,7 @@
         // Load recordings with pagination
         async function loadRecordings(page) {
             try {
-                const response = await fetch(`/api/recordings?page=${page}&per_page=${perPage}`);
+                const response = await fetch(`/api/recordings?page=${page}&per_page=${perPage}&include_converted=true`);
                 const data = await response.json();
                 
                 const tbody = document.getElementById('recordings-table');
@@ -2104,9 +2114,9 @@
         }
 
         // Load active recordings
-        async function loadActiveRecordings() {
+        async function loadActiveRecordings(page = 1) {
             try {
-                const response = await fetch('/api/active-recordings');
+                const response = await fetch(`/api/active-recordings?page=${page}&per_page=6`);
                 const data = await response.json();
                 
                 const tbody = document.getElementById('active-recordings-list');
@@ -2141,16 +2151,51 @@
                 
                 // Reinitialize tooltips for the new table rows
                 initializeTooltips();
+                
+                // Update pagination
+                updateActiveRecordingsPagination(data.current_page, data.pages, data.total);
             } catch (error) {
                 console.error('Error loading active recordings:', error);
                 const tbody = document.getElementById('active-recordings-list');
                 tbody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Error loading recordings</td></tr>';
+                
+                // Clear pagination
+                const pagination = document.getElementById('active-recordings-pagination');
+                pagination.innerHTML = '';
             }
+        }
+
+        // Update active recordings pagination
+        function updateActiveRecordingsPagination(currentPage, totalPages, total) {
+            const pagination = document.getElementById('active-recordings-pagination');
+            pagination.innerHTML = '';
+            
+            if (totalPages <= 1) return; // Don't show pagination for single page
+            
+            // Previous button
+            const prevLi = document.createElement('li');
+            prevLi.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a class="page-link" href="#" onclick="loadActiveRecordings(${currentPage - 1})">Previous</a>`;
+            pagination.appendChild(prevLi);
+            
+            // Page numbers
+            for (let i = 1; i <= totalPages; i++) {
+                const li = document.createElement('li');
+                li.className = `page-item ${i === currentPage ? 'active' : ''}`;
+                li.innerHTML = `<a class="page-link" href="#" onclick="loadActiveRecordings(${i})">${i}</a>`;
+                pagination.appendChild(li);
+            }
+            
+            // Next button
+            const nextLi = document.createElement('li');
+            nextLi.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a class="page-link" href="#" onclick="loadActiveRecordings(${currentPage + 1})">Next</a>`;
+            pagination.appendChild(nextLi);
         }
 
         // Refresh active recordings
         function refreshActiveRecordings() {
-            loadActiveRecordings();
+            loadActiveRecordings(1);
         }
 
         // Stop recording
@@ -2565,12 +2610,12 @@
         }
 
         // Load recordings for conversion
-        async function loadRecordingsForConversion() {
+        async function loadRecordingsForConversion(page = 1) {
             try {
                 console.log('=== loadRecordingsForConversion() called ===');
-                console.log('Fetching from: /api/recordings?per_page=50&conversion_only=true');
+                console.log(`Fetching from: /api/recordings?page=${page}&per_page=6&conversion_only=true`);
                 
-                const response = await fetch('/api/recordings?per_page=50&conversion_only=true');
+                const response = await fetch(`/api/recordings?page=${page}&per_page=6&conversion_only=true`);
                 console.log('Response status:', response.status);
                 console.log('Response ok:', response.ok);
                 
@@ -2631,10 +2676,17 @@
                     // Initialize tooltips for the new table rows
                     initializeTooltips();
                     
+                    // Update pagination
+                    updateConversionRecordingsPagination(data.current_page, data.pages, data.total);
+                    
                     console.log('Finished processing recordings');
                 } else {
                     console.log('No recordings found, showing empty message');
                     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted">No recordings found</td></tr>';
+                    
+                    // Clear pagination
+                    const pagination = document.getElementById('conversion-recordings-pagination');
+                    pagination.innerHTML = '';
                 }
             } catch (error) {
                 console.error('Error in loadRecordingsForConversion:', error);
@@ -2644,9 +2696,37 @@
             }
         }
 
+        // Update conversion recordings pagination
+        function updateConversionRecordingsPagination(currentPage, totalPages, total) {
+            const pagination = document.getElementById('conversion-recordings-pagination');
+            pagination.innerHTML = '';
+            
+            if (totalPages <= 1) return; // Don't show pagination for single page
+            
+            // Previous button
+            const prevLi = document.createElement('li');
+            prevLi.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a class="page-link" href="#" onclick="loadRecordingsForConversion(${currentPage - 1})">Previous</a>`;
+            pagination.appendChild(prevLi);
+            
+            // Page numbers
+            for (let i = 1; i <= totalPages; i++) {
+                const li = document.createElement('li');
+                li.className = `page-item ${i === currentPage ? 'active' : ''}`;
+                li.innerHTML = `<a class="page-link" href="#" onclick="loadRecordingsForConversion(${i})">${i}</a>`;
+                pagination.appendChild(li);
+            }
+            
+            // Next button
+            const nextLi = document.createElement('li');
+            nextLi.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a class="page-link" href="#" onclick="loadRecordingsForConversion(${currentPage + 1})">Next</a>`;
+            pagination.appendChild(nextLi);
+        }
+
         // Refresh recordings for conversion
         function refreshRecordingsForConversion() {
-            loadRecordingsForConversion();
+            loadRecordingsForConversion(1);
         }
 
         // Toggle all recordings selection

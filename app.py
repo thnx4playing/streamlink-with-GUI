@@ -1145,22 +1145,26 @@ def get_recordings():
     logger.info("GET /api/recordings called")
     try:
         page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 20, type=int)
+        per_page = request.args.get('per_page', 6, type=int)  # Changed to 6 items per page
         conversion_only = request.args.get('conversion_only', 'false').lower() == 'true'
+        include_converted = request.args.get('include_converted', 'false').lower() == 'true'
         
-        logger.info(f"Fetching recordings: page={page}, per_page={per_page}, conversion_only={conversion_only}")
+        logger.info(f"Fetching recordings: page={page}, per_page={per_page}, conversion_only={conversion_only}, include_converted={include_converted}")
         
-        # Filter out recordings that have been converted
-        # Get all recording IDs that have completed conversion jobs
-        converted_recording_ids = db.session.query(ConversionJob.recording_id).filter(
-            ConversionJob.status == 'completed'
-        ).distinct().all()
-        converted_ids = [r[0] for r in converted_recording_ids if r[0] is not None]
-        
-        # Query recordings excluding converted ones and deleted ones
+        # Query recordings excluding deleted ones
         recordings_query = Recording.query.filter(Recording.status != 'deleted')
-        if converted_ids:
-            recordings_query = recordings_query.filter(~Recording.id.in_(converted_ids))
+        
+        # Only filter out converted recordings if not including them
+        if not include_converted:
+            # Filter out recordings that have been converted
+            # Get all recording IDs that have completed conversion jobs
+            converted_recording_ids = db.session.query(ConversionJob.recording_id).filter(
+                ConversionJob.status == 'completed'
+            ).distinct().all()
+            converted_ids = [r[0] for r in converted_recording_ids if r[0] is not None]
+            
+            if converted_ids:
+                recordings_query = recordings_query.filter(~Recording.id.in_(converted_ids))
         
         recordings = recordings_query.order_by(Recording.started_at.desc()).paginate(
             page=page, per_page=per_page, error_out=False
@@ -1281,25 +1285,43 @@ def check_streamer_status(streamer_id):
 @app.route('/api/active-recordings')
 def get_active_recordings():
     """API endpoint to get currently active recordings"""
-    active_recordings = Recording.query.filter_by(status='recording').all()
-    
-    recordings_data = []
-    for recording in active_recordings:
-        streamer = Streamer.query.get(recording.streamer_id)
-        recordings_data.append({
-            'id': recording.id,
-            'streamer_id': recording.streamer_id,
-            'streamer_name': streamer.username if streamer else 'Unknown',
-            'filename': recording.filename,
-            'title': recording.title,
-            'game': recording.game,
-            'status': recording.status,
-                            'started_at': recording.started_at.isoformat() + 'Z',
-            'file_size': recording.file_size,
-            'duration': recording.duration
+    try:
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 6, type=int)  # Default 6 per page
+        
+        logger.info(f"Fetching active recordings: page={page}, per_page={per_page}")
+        
+        active_recordings = Recording.query.filter_by(status='recording').order_by(Recording.started_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+        
+        recordings_data = []
+        for recording in active_recordings.items:
+            streamer = Streamer.query.get(recording.streamer_id)
+            recordings_data.append({
+                'id': recording.id,
+                'streamer_id': recording.streamer_id,
+                'streamer_name': streamer.username if streamer else 'Unknown',
+                'filename': recording.filename,
+                'title': recording.title,
+                'game': recording.game,
+                'status': recording.status,
+                'started_at': recording.started_at.isoformat() + 'Z',
+                'file_size': recording.file_size,
+                'duration': recording.duration
+            })
+        
+        logger.info(f"Returning {len(recordings_data)} active recordings")
+        return jsonify({
+            'recordings': recordings_data,
+            'total': active_recordings.total,
+            'pages': active_recordings.pages,
+            'current_page': page,
+            'per_page': per_page
         })
-    
-    return jsonify({'recordings': recordings_data})
+    except Exception as e:
+        logger.error(f"Error in get_active_recordings: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/recordings/<int:recording_id>/stop', methods=['POST'])
 def stop_recording(recording_id):
@@ -1585,7 +1607,7 @@ def get_conversion_progress():
     """API endpoint to get conversion progress with pagination"""
     try:
         page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 10, type=int)  # Default 10 per page
+        per_page = request.args.get('per_page', 6, type=int)  # Default 6 per page
         
         logger.info(f"Fetching conversion progress: page={page}, per_page={per_page}")
         
