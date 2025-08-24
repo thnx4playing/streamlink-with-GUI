@@ -92,8 +92,13 @@ app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {
 db = SQLAlchemy(app)
 CORS(app)
 
-# Create scoped session for worker threads
-WorkerSession = scoped_session(sessionmaker(bind=db.engine))
+# Create scoped session for worker threads (will be initialized later)
+WorkerSession = None
+
+def initialize_worker_session():
+    """Initialize the worker session within app context"""
+    global WorkerSession
+    WorkerSession = scoped_session(sessionmaker(bind=db.engine))
 
 # Configure SQLite for better concurrency (WAL mode and busy timeout)
 from sqlalchemy import text, event
@@ -112,13 +117,17 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.execute("PRAGMA busy_timeout=60000;")
     cursor.close()
 
-# Also set initial PRAGMAs for existing connections
+# Also set initial PRAGMAs for existing connections and initialize worker session
 with app.app_context():
     try:
         db.session.execute(text("PRAGMA journal_mode=WAL;"))
         db.session.execute(text("PRAGMA synchronous=NORMAL;"))
         db.session.execute(text("PRAGMA busy_timeout=60000;"))
         db.session.commit()
+        
+        # Initialize scoped session for worker threads
+        initialize_worker_session()
+        
     except Exception as e:
         app.logger.warning(f"SQLite PRAGMA init failed: {e}")
 
