@@ -64,9 +64,27 @@ except Exception as e:
 app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{data_dir}/streamlink.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# SQLite engine options for thread safety and busy timeout
+app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {
+    "connect_args": {
+        "check_same_thread": False,   # required since we use threads
+        "timeout": 30,                # sqlite busy timeout in seconds
+    }
+})
+
 # Initialize extensions
 db = SQLAlchemy(app)
 CORS(app)
+
+# Configure SQLite for better concurrency (WAL mode and busy timeout)
+from sqlalchemy import text
+with app.app_context():
+    try:
+        db.session.execute(text("PRAGMA journal_mode=WAL;"))
+        db.session.execute(text("PRAGMA busy_timeout=30000;"))  # 30s
+        db.session.commit()
+    except Exception as e:
+        app.logger.warning(f"SQLite PRAGMA init failed: {e}")
 
 # Database Models
 class Streamer(db.Model):
@@ -160,6 +178,18 @@ def get_converted_path():
 def _utcnow():
     return datetime.utcnow()
 
+def _retry_locked(fn, *args, **kwargs):
+    """Retry function with backoff for transient 'database is locked' errors"""
+    from sqlalchemy.exc import OperationalError
+    for i in range(5):
+        try:
+            return fn(*args, **kwargs)
+        except OperationalError as e:
+            if "database is locked" in str(e).lower():
+                time.sleep(0.2 * (i + 1))
+                continue
+            raise
+
 def _eligible_conversion_jobs(batch_size=3):
     """Return next chunk of conversion jobs that should run now."""
     now = _utcnow()
@@ -196,7 +226,20 @@ def _update_job_progress(job, text):
     except Exception:
         db.session.rollback()
 
-def _convert_single_job(job: "ConversionJob"):
+def _start_job(job: "ConversionJob"):
+    """Mark job as started and commit quickly"""
+    job.status = 'converting'
+    job.started_at = _utcnow()
+    _update_job_progress(job, "Starting conversion...")
+    db.session.commit()
+
+def _finalize_job(job: "ConversionJob"):
+    """Mark job as completed/failed and commit quickly"""
+    job.completed_at = _utcnow()
+    db.session.commit()
+
+def _run_ffmpeg_conversion(job: "ConversionJob"):
+    """Run the actual FFmpeg conversion (long-running operation)"""
     # Resolve paths & validations (kept defensive)
     rec = Recording.query.get(job.recording_id) if job.recording_id else None
     if not rec:
@@ -215,8 +258,6 @@ def _convert_single_job(job: "ConversionJob"):
     mp4_path = os.path.join(out_dir, f"{base_name}.mp4")
     # Build ffmpeg cmd
     cmd = ["ffmpeg", "-y", "-i", ts_path, "-c", "copy", "-movflags", "+faststart", mp4_path]
-    job.status = 'converting'
-    job.started_at = _utcnow()
     _update_job_progress(job, "Starting ffmpeg…")
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -243,12 +284,6 @@ def _convert_single_job(job: "ConversionJob"):
     except Exception as e:
         job.status = 'failed'
         _update_job_progress(job, f"Exception: {e}")
-    finally:
-        job.completed_at = _utcnow()
-        try:
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
@@ -258,14 +293,20 @@ def conversion_worker_loop():
     try:
         while True:
             try:
-                jobs = _eligible_conversion_jobs()
+                # Use retry mechanism for database operations
+                jobs = _retry_locked(_eligible_conversion_jobs)
                 if not jobs:
                     # Sleep lightly but allow immediate wake-up when new jobs are queued
                     conversion_wakeup.wait(timeout=5)
                     conversion_wakeup.clear()
                     continue
                 for job in jobs:
-                    _convert_single_job(job)
+                    # Mark job as started and commit quickly
+                    _retry_locked(_start_job, job)
+                    # Run the actual conversion (long-running)
+                    _run_ffmpeg_conversion(job)
+                    # Mark job as completed/failed and commit quickly
+                    _retry_locked(_finalize_job, job)
             except Exception as e:
                 logger.exception("Conversion worker loop error: %s", e)
                 time.sleep(2)
