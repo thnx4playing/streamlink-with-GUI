@@ -2225,22 +2225,44 @@
                 
                 const settings = await response.json();
                 console.log('Conversion settings received:', settings);
+                console.log('Available presets:', settings.available_presets);
+                console.log('Current preset:', settings.ffmpeg_preset);
                 
                 // Update display elements for paths
-                document.getElementById('conversion-volume-path-display').textContent = settings.volume_path || 'Not set';
-                document.getElementById('output-volume-path-display').textContent = settings.output_volume_path || 'Not set';
+                const volumePathElement = document.getElementById('conversion-volume-path-display');
+                const outputPathElement = document.getElementById('output-volume-path-display');
+                
+                console.log('Volume path element found:', !!volumePathElement);
+                console.log('Output path element found:', !!outputPathElement);
+                
+                if (volumePathElement) {
+                    volumePathElement.textContent = settings.volume_path || 'Not set';
+                }
+                if (outputPathElement) {
+                    outputPathElement.textContent = settings.output_volume_path || 'Not set';
+                }
                 
                 // Populate FFmpeg preset dropdown
                 const sel = document.getElementById('ffmpegPreset');
-                sel.innerHTML = ''; // clear
-                if (settings.available_presets) {
-                    settings.available_presets.forEach(p => {
-                        const opt = document.createElement('option');
-                        opt.value = p.key;
-                        opt.textContent = p.label;
-                        opt.dataset.desc = p.desc;
-                        sel.appendChild(opt);
-                    });
+                console.log('FFmpeg preset select element found:', !!sel);
+                
+                if (sel) {
+                    sel.innerHTML = ''; // clear
+                    if (settings.available_presets && settings.available_presets.length > 0) {
+                        console.log('Adding preset options:', settings.available_presets.length);
+                        settings.available_presets.forEach(p => {
+                            const opt = document.createElement('option');
+                            opt.value = p.key;
+                            opt.textContent = p.label;
+                            opt.dataset.desc = p.desc;
+                            sel.appendChild(opt);
+                            console.log('Added option:', p.key, p.label);
+                        });
+                    } else {
+                        console.log('No available presets found in response');
+                    }
+                } else {
+                    console.error('FFmpeg preset select element not found!');
                 }
                 
                 // Set selected preset
