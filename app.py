@@ -9,6 +9,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from dotenv import load_dotenv
 from logging.handlers import RotatingFileHandler
+from sqlalchemy.orm import scoped_session, sessionmaker
 
 # Import existing modules
 from twitch_manager import TwitchManager, StreamStatus
@@ -79,6 +80,8 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # SQLite engine options for thread safety and busy timeout
 app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {
     "pool_pre_ping": True,
+    "pool_size": 5,
+    "max_overflow": 5,
     "connect_args": {
         "check_same_thread": False,   # required since we use threads
         "timeout": 30,                # sqlite busy timeout in seconds
@@ -89,12 +92,32 @@ app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {
 db = SQLAlchemy(app)
 CORS(app)
 
+# Create scoped session for worker threads
+WorkerSession = scoped_session(sessionmaker(bind=db.engine))
+
 # Configure SQLite for better concurrency (WAL mode and busy timeout)
-from sqlalchemy import text
+from sqlalchemy import text, event
+
+def _is_sqlite_uri(uri: str) -> bool:
+    return uri.startswith("sqlite:")
+
+@event.listens_for(db.engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
+    if not _is_sqlite_uri(uri):
+        return
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL;")
+    cursor.execute("PRAGMA synchronous=NORMAL;")
+    cursor.execute("PRAGMA busy_timeout=60000;")
+    cursor.close()
+
+# Also set initial PRAGMAs for existing connections
 with app.app_context():
     try:
         db.session.execute(text("PRAGMA journal_mode=WAL;"))
-        db.session.execute(text("PRAGMA busy_timeout=30000;"))  # 30s
+        db.session.execute(text("PRAGMA synchronous=NORMAL;"))
+        db.session.execute(text("PRAGMA busy_timeout=60000;"))
         db.session.commit()
     except Exception as e:
         app.logger.warning(f"SQLite PRAGMA init failed: {e}")
@@ -300,49 +323,58 @@ def _eligible_conversion_jobs(batch_size=3):
     )
     return [job] if job else []
 
-def _update_job_progress(job, text):
+def _update_job_progress(job, text, session=None):
+    if session is None:
+        session = db.session
     # Re-attach to ensure we work with an attached instance
-    job = db.session.get(ConversionJob, job.id)
+    job = session.get(ConversionJob, job.id)
     job.progress = text
     try:
-        db.session.commit()
+        session.commit()
     except Exception:
-        db.session.rollback()
+        session.rollback()
 
-def _start_job(job: "ConversionJob"):
+def _start_job(job: "ConversionJob", session=None):
     """Mark job as started and commit quickly"""
+    if session is None:
+        session = db.session
     # Re-attach to ensure we work with an attached instance
-    job = db.session.get(ConversionJob, job.id)
+    job = session.get(ConversionJob, job.id)
     job.status = 'converting'
     job.started_at = _utcnow()
-    _update_job_progress(job, "Starting conversion...")
-    db.session.commit()
+    # Set a non-empty progress message so the UI doesn't treat this as "Queued"
+    job.progress = "Starting conversion…"
+    session.commit()  # single, early commit
 
-def _finalize_job(job: "ConversionJob"):
+def _finalize_job(job: "ConversionJob", session=None):
     """Mark job as completed/failed and commit quickly"""
+    if session is None:
+        session = db.session
     # Re-attach to ensure we work with an attached instance
-    job = db.session.get(ConversionJob, job.id)
+    job = session.get(ConversionJob, job.id)
     job.completed_at = _utcnow()
-    db.session.commit()
+    session.commit()
 
-def _run_ffmpeg_conversion(job: "ConversionJob"):
+def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
     """Run the actual FFmpeg conversion (long-running operation)"""
+    if session is None:
+        session = db.session
     # Resolve paths & validations (kept defensive)
     rec = Recording.query.get(job.recording_id) if job.recording_id else None
     if not rec:
         # Re-attach to ensure we work with an attached instance
-        job = db.session.get(ConversionJob, job.id)
+        job = session.get(ConversionJob, job.id)
         job.status = 'failed'
-        _update_job_progress(job, 'Recording not found')
+        _update_job_progress(job, 'Recording not found', session)
         return
     # Only finalized .ts (no .part)
     ts_path = os.path.join(get_download_path(), f"{rec.filename}.ts")
     part_path = os.path.join(get_download_path(), f"{rec.filename}.ts.part")
     if (not os.path.exists(ts_path)) or os.path.exists(part_path) or rec.status in ('deleted','failed','recording'):
         # Re-attach to ensure we work with an attached instance
-        job = db.session.get(ConversionJob, job.id)
+        job = session.get(ConversionJob, job.id)
         job.status = 'failed'
-        _update_job_progress(job, 'Source not eligible')
+        _update_job_progress(job, 'Source not eligible', session)
         return
     out_dir = get_converted_path()
     base_name = job.custom_filename.strip() if job.custom_filename else rec.filename
@@ -367,6 +399,19 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         conversion_logger.info(f"FFmpeg process started with PID: {proc.pid}")
         
+        # Throttle progress updates to reduce database writes
+        last_commit = 0
+        last_progress = ""
+        
+        def _maybe_update_progress(text):
+            nonlocal last_commit, last_progress
+            now = time.time()
+            # Update if text changed or at most once per second
+            if now - last_commit >= 1 or text != last_progress:
+                _update_job_progress(job, text, session)
+                last_commit = now
+                last_progress = text
+        
         # read a few lines to keep UI alive
         last_line = ''
         while True:
@@ -378,14 +423,14 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
                 # Log all FFmpeg output to conversion.log
                 conversion_logger.info(f"FFmpeg output: {last_line}")
                 if 'time=' in last_line or 'frame=' in last_line:
-                    _update_job_progress(job, last_line[-120:])
+                    _maybe_update_progress(last_line[-120:])
         rc = proc.wait()
         conversion_logger.info(f"FFmpeg process completed with return code: {rc}")
         if rc == 0 and os.path.exists(mp4_path):
             # Re-attach to ensure we work with an attached instance
-            job = db.session.get(ConversionJob, job.id)
+            job = session.get(ConversionJob, job.id)
             job.status = 'completed'
-            _update_job_progress(job, f"Done: {os.path.basename(mp4_path)}")
+            _update_job_progress(job, f"Done: {os.path.basename(mp4_path)}", session)
             conversion_logger.info(f"Conversion completed successfully: {os.path.basename(mp4_path)}")
             if job.delete_original and os.path.exists(ts_path):
                 try: 
@@ -395,76 +440,81 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
                     conversion_logger.warning(f"Failed to delete original file {os.path.basename(ts_path)}: {e}")
         else:
             # Re-attach to ensure we work with an attached instance
-            job = db.session.get(ConversionJob, job.id)
+            job = session.get(ConversionJob, job.id)
             job.status = 'failed'
-            _update_job_progress(job, f"ffmpeg failed (rc={rc})")
+            _update_job_progress(job, f"ffmpeg failed (rc={rc})", session)
             conversion_logger.error(f"FFmpeg conversion failed with return code {rc}")
     except Exception as e:
         # Re-attach to ensure we work with an attached instance
-        job = db.session.get(ConversionJob, job.id)
+        job = session.get(ConversionJob, job.id)
         job.status = 'failed'
-        _update_job_progress(job, f"Exception: {e}")
+        _update_job_progress(job, f"Exception: {e}", session)
         conversion_logger.error(f"Conversion exception: {e}")
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
     with app.app_context():
         logger.info("Conversion worker: started (app context bound)")
-        while True:
-            try:
-                # Pick the oldest eligible pending job
-                job = (
-                    ConversionJob.query
-                    .filter(ConversionJob.status == 'pending')
-                    .filter(
-                        db.or_(
-                            # Manual/immediate jobs: run regardless of scheduled_at
-                            ConversionJob.schedule_type.in_(['manual', 'immediate']),
-                            # Scheduled jobs: run when due
-                            db.and_(
-                                ConversionJob.schedule_type.notin_(['manual', 'immediate']),
-                                ConversionJob.scheduled_at.isnot(None),
-                                ConversionJob.scheduled_at <= _utcnow(),
-                            ),
-                        )
-                    )
-                    .order_by(ConversionJob.id.asc())
-                    .first()
-                )
-                
-                if not job:
-                    time.sleep(1)
-                    continue
-                
+        session = WorkerSession()
+        try:
+            while True:
                 try:
-                    # Re-fetch an attached instance to ensure we work with a fresh, attached object
-                    job = db.session.get(ConversionJob, job.id)
-                    conversion_logger.info(f"Starting conversion job {job.id}")
-                    _start_job(job)
-                    _run_ffmpeg_conversion(job)
-                    _finalize_job(job)
-                    conversion_logger.info(f"Completed conversion job {job.id}")
-                except Exception as e:
-                    app.logger.exception(f"Error processing job {job.id}: {e}")
-                    conversion_logger.error(f"Error processing job {job.id}: {e}")
-                    # Mark job as failed if we encounter an error
+                    # Pick the oldest eligible pending job
+                    job = (
+                        session.query(ConversionJob)
+                        .filter(ConversionJob.status == 'pending')
+                        .filter(
+                            db.or_(
+                                # Manual/immediate jobs: run regardless of scheduled_at
+                                ConversionJob.schedule_type.in_(['manual', 'immediate']),
+                                # Scheduled jobs: run when due
+                                db.and_(
+                                    ConversionJob.schedule_type.notin_(['manual', 'immediate']),
+                                    ConversionJob.scheduled_at.isnot(None),
+                                    ConversionJob.scheduled_at <= _utcnow(),
+                                ),
+                            )
+                        )
+                        .order_by(ConversionJob.id.asc())
+                        .first()
+                    )
+                    
+                    if not job:
+                        time.sleep(1)
+                        continue
+                    
                     try:
-                        job = db.session.get(ConversionJob, job.id)
-                        job.status = 'failed'
-                        job.completed_at = _utcnow()
-                        job.progress = f"Error: {str(e)}"
-                        db.session.commit()
-                        conversion_logger.error(f"Marked job {job.id} as failed due to error")
-                    except Exception as commit_error:
-                        app.logger.exception(f"Failed to mark job {job.id} as failed: {commit_error}")
-                        conversion_logger.error(f"Failed to mark job {job.id} as failed: {commit_error}")
-                
-            except Exception as e:
-                app.logger.exception("Conversion worker loop error")
-                time.sleep(1)
-            finally:
-                # Ensure each iteration has a clean session (thread-safe)
-                db.session.remove()
+                        # Re-fetch an attached instance to ensure we work with a fresh, attached object
+                        job = session.get(ConversionJob, job.id)
+                        conversion_logger.info(f"Starting conversion job {job.id}")
+                        _start_job(job, session)
+                        _run_ffmpeg_conversion(job, session)
+                        _finalize_job(job, session)
+                        conversion_logger.info(f"Completed conversion job {job.id}")
+                    except Exception as e:
+                        app.logger.exception(f"Error processing job {job.id}: {e}")
+                        conversion_logger.error(f"Error processing job {job.id}: {e}")
+                        # Mark job as failed if we encounter an error
+                        try:
+                            job = session.get(ConversionJob, job.id)
+                            job.status = 'failed'
+                            job.completed_at = _utcnow()
+                            job.progress = f"Error: {str(e)}"
+                            session.commit()
+                            conversion_logger.error(f"Marked job {job.id} as failed due to error")
+                        except Exception as commit_error:
+                            app.logger.exception(f"Failed to mark job {job.id} as failed: {commit_error}")
+                            conversion_logger.error(f"Failed to mark job {job.id} as failed: {commit_error}")
+                    
+                except Exception as e:
+                    app.logger.exception("Conversion worker loop error")
+                    time.sleep(1)
+                finally:
+                    # Ensure each iteration has a clean session (thread-safe)
+                    session.remove()
+        finally:
+            session.close()
+            WorkerSession.remove()
 
 def get_recording_status(recording):
     """Determine the actual status of a recording based on file existence and extension"""
