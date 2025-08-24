@@ -223,6 +223,14 @@ def get_converted_path():
     # Always use the internal container path for converted files
     return '/app/converted'
 
+def get_download_volume_path():
+    """Get the real host download path from environment or use default"""
+    return os.getenv('DOWNLOAD_VOLUME_PATH', get_download_path())
+
+def get_converted_volume_path():
+    """Get the real host converted path from environment or use default"""
+    return os.getenv('CONVERTED_VOLUME_PATH', get_converted_path())
+
 def _utcnow():
     return datetime.utcnow()
 
@@ -1238,8 +1246,8 @@ def get_conversion_settings():
             logger.info("Default settings created")
         
         response_data = {
-            'volume_path': get_download_path(),
-            'output_volume_path': get_converted_path(),
+            'volume_path': get_download_volume_path(),
+            'output_volume_path': get_converted_volume_path(),
             'naming_scheme': settings.naming_scheme,
             'custom_filename_template': settings.custom_filename_template or '',
             'delete_original_after_conversion': settings.delete_original_after_conversion,

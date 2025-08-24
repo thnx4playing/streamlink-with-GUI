@@ -442,6 +442,48 @@
              max-width: 0; /* Forces text-overflow to work */
          }
          
+         /* Recordings for Conversion table styling - prevent wrapping */
+         #conversion-recordings-table td {
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             max-width: 0; /* Forces text-overflow to work */
+         }
+         
+         /* Specific column widths for Recordings for Conversion */
+         #conversion-recordings-table td:nth-child(1) { /* Checkbox */
+             max-width: 40px;
+             text-align: center;
+         }
+         
+         #conversion-recordings-table td:nth-child(2) { /* Streamer */
+             max-width: 120px;
+         }
+         
+         #conversion-recordings-table td:nth-child(3) { /* Title */
+             max-width: 200px;
+         }
+         
+         #conversion-recordings-table td:nth-child(4) { /* Status */
+             max-width: 100px;
+         }
+         
+         #conversion-recordings-table td:nth-child(5) { /* Started */
+             max-width: 100px;
+         }
+         
+         #conversion-recordings-table td:nth-child(6) { /* Duration */
+             max-width: 80px;
+         }
+         
+         #conversion-recordings-table td:nth-child(7) { /* File Size */
+             max-width: 80px;
+         }
+         
+         #conversion-recordings-table td:nth-child(8) { /* Conversion Status */
+             max-width: 120px;
+         }
+         
          /* Badge styling */
          .badge {
              border-radius: 0;
