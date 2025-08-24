@@ -937,11 +937,11 @@
                                     <i class="fas fa-film me-2"></i>Recordings for Conversion
                                 </h5>
                                 <div>
-                                    <button class="btn btn-sm btn-outline-primary me-2" onclick="refreshRecordingsForConversion()">
-                                        <i class="fas fa-sync-alt refresh-btn"></i> Refresh
-                                    </button>
-                                    <button class="btn btn-sm btn-primary" onclick="convertSelectedRecordings()" id="convert-btn" disabled>
+                                    <button class="btn btn-sm btn-primary me-2" onclick="convertSelectedRecordings()" id="convert-btn" disabled>
                                         <i class="fas fa-cog me-1"></i>Convert Selected
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-primary" onclick="refreshRecordingsForConversion()">
+                                        <i class="fas fa-sync-alt refresh-btn"></i> Refresh
                                     </button>
                                 </div>
                             </div>
@@ -976,15 +976,23 @@
                                  <h5 class="mb-0">
                                      <i class="fas fa-tasks me-2"></i>Conversion Progress
                                  </h5>
-                                 <button class="btn btn-sm btn-outline-primary" onclick="refreshConversionProgress()">
-                                     <i class="fas fa-sync-alt refresh-btn"></i> Refresh
-                                 </button>
+                                 <div>
+                                     <button class="btn btn-sm btn-outline-primary me-2" onclick="showConversionProgressModal()">
+                                         View All
+                                     </button>
+                                     <button class="btn btn-sm btn-outline-primary" onclick="refreshConversionProgress()">
+                                         <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                                     </button>
+                                 </div>
                              </div>
                              <div class="card-body">
                                  <div class="table-responsive">
                                      <table class="table table-hover conversion-progress-table">
                                          <thead>
                                              <tr>
+                                                 <th>
+                                                     <input type="checkbox" id="select-all-conversions" onchange="toggleAllConversions()">
+                                                 </th>
                                                  <th>Filename</th>
                                                  <th>Status</th>
                                                  <th>Progress</th>
@@ -1131,16 +1139,43 @@
 
             <!-- Conversion Progress Modal -->
             <div class="modal fade" id="conversionProgressModal" tabindex="-1">
-                <div class="modal-dialog modal-lg">
+                <div class="modal-dialog modal-xl">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h5 class="modal-title">Conversion Progress</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            <h5 class="modal-title">All Conversion Progress</h5>
+                            <div class="d-flex gap-2">
+                                <button class="btn btn-sm btn-outline-danger" id="bulk-delete-conversions-btn" onclick="bulkDeleteConversions()" disabled>
+                                    <i class="fas fa-trash me-1"></i>Delete Selected
+                                </button>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
                         </div>
                         <div class="modal-body">
-                            <div id="conversion-progress-list-modal">
-                                <!-- Conversion progress will be shown here -->
+                            <div class="table-responsive">
+                                <table class="table table-hover">
+                                    <thead>
+                                        <tr>
+                                            <th>
+                                                <input type="checkbox" id="select-all-conversions-modal" onchange="toggleAllConversionsModal()">
+                                            </th>
+                                            <th>Filename</th>
+                                            <th>Status</th>
+                                            <th>Progress</th>
+                                            <th>Schedule Type</th>
+                                            <th>Output File</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="conversion-progress-modal-table">
+                                        <!-- Conversion progress will be loaded here -->
+                                    </tbody>
+                                </table>
                             </div>
+                            <nav>
+                                <ul class="pagination justify-content-center" id="conversion-progress-modal-pagination">
+                                    <!-- Pagination will be generated here -->
+                                </ul>
+                            </nav>
                         </div>
                     </div>
                 </div>
@@ -1702,6 +1737,219 @@
             }
         }
 
+        // Toggle all conversions
+        function toggleAllConversions() {
+            const selectAllCheckbox = document.getElementById('select-all-conversions');
+            const checkboxes = document.querySelectorAll('.conversion-checkbox');
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+            });
+            
+            updateBulkDeleteConversionsButton();
+        }
+
+        // Toggle all conversions in modal
+        function toggleAllConversionsModal() {
+            const selectAllCheckbox = document.getElementById('select-all-conversions-modal');
+            const checkboxes = document.querySelectorAll('.conversion-checkbox-modal');
+            
+            checkboxes.forEach(checkbox => {
+                checkbox.checked = selectAllCheckbox.checked;
+            });
+            
+            updateBulkDeleteConversionsModalButton();
+        }
+
+        // Update bulk delete conversions button state
+        function updateBulkDeleteConversionsButton() {
+            const checkboxes = document.querySelectorAll('.conversion-checkbox:checked');
+            // This would be for a button in the main table, but we don't have one yet
+            console.log(`${checkboxes.length} conversions selected in main table`);
+        }
+
+        // Update bulk delete conversions modal button state
+        function updateBulkDeleteConversionsModalButton() {
+            const checkboxes = document.querySelectorAll('.conversion-checkbox-modal:checked');
+            const bulkDeleteBtn = document.getElementById('bulk-delete-conversions-btn');
+            
+            if (checkboxes.length > 0) {
+                bulkDeleteBtn.disabled = false;
+                bulkDeleteBtn.textContent = `Delete Selected (${checkboxes.length})`;
+            } else {
+                bulkDeleteBtn.disabled = true;
+                bulkDeleteBtn.innerHTML = '<i class="fas fa-trash me-1"></i>Delete Selected';
+            }
+        }
+
+        // Show conversion progress modal
+        function showConversionProgressModal() {
+            loadConversionProgressModal(1);
+            new bootstrap.Modal(document.getElementById('conversionProgressModal')).show();
+        }
+
+        // Load conversion progress modal with pagination
+        async function loadConversionProgressModal(page) {
+            try {
+                const response = await fetch(`/api/conversion-progress?page=${page}&per_page=${perPage}`);
+                const data = await response.json();
+                
+                const tbody = document.getElementById('conversion-progress-modal-table');
+                tbody.innerHTML = '';
+                
+                // Store conversions data for bulk operations
+                window.currentConversionsData = data.conversions;
+                
+                if (data.conversions && data.conversions.length > 0) {
+                    data.conversions.forEach((conversion, index) => {
+                        const row = document.createElement('tr');
+                        
+                        const statusClass = conversion.status === 'completed' ? 'bg-success' : 
+                                          conversion.status === 'failed' ? 'bg-danger' : 
+                                          conversion.status === 'converting' ? 'bg-warning' : 'bg-secondary';
+                        
+                        // Show "Queued" for immediate/manual jobs that are pending
+                        let statusText = conversion.status.toUpperCase();
+                        if (conversion.status === 'pending' && (conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual')) {
+                            statusText = 'QUEUED';
+                        }
+                        
+                        row.innerHTML = `
+                            <td>
+                                <input type="checkbox" class="conversion-checkbox-modal" value="${index}" onchange="updateBulkDeleteConversionsModalButton()">
+                            </td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.filename}">${conversion.filename}</td>
+                            <td><span class="badge ${statusClass}">${statusText}</span></td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}</td>
+                            <td>${conversion.schedule_type || 'immediate'}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.output_filename || '-'}">${conversion.output_filename || '-'}</td>
+                            <td>
+                                <div class="d-flex gap-1 justify-content-center">
+                                    ${conversion.status !== 'completed' && conversion.status !== 'failed' ? 
+                                        `<button class="btn btn-sm btn-outline-danger" onclick="cancelConversionJob(${conversion.job_id})" title="Cancel conversion">
+                                            <i class="fas fa-times"></i>
+                                        </button>` : ''
+                                    }
+                                    ${conversion.status === 'completed' && conversion.output_filename ? 
+                                        `<button class="btn btn-sm btn-outline-danger" onclick="deleteConvertedFile(${conversion.job_id})" title="Delete converted file">
+                                            <i class="fas fa-file-video"></i>
+                                        </button>` : ''
+                                    }
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="removeConversionJobFromHistory(${conversion.job_id})" 
+                                             title="Remove from history">
+                                         <i class="fas fa-history"></i>
+                                     </button>
+                                </div>
+                            </td>
+                        `;
+                        tbody.appendChild(row);
+                    });
+                    
+                    // Reinitialize tooltips for the new table rows
+                    initializeTooltips();
+                    
+                    // Update pagination (reuse existing function or create new one)
+                    updateConversionProgressModalPagination(data.current_page, data.pages, data.total);
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No conversion jobs found</td></tr>';
+                }
+                
+                currentPage = page;
+            } catch (error) {
+                console.error('Error loading conversion progress modal:', error);
+            }
+        }
+
+        // Update conversion progress modal pagination
+        function updateConversionProgressModalPagination(currentPage, totalPages, total) {
+            const pagination = document.getElementById('conversion-progress-modal-pagination');
+            pagination.innerHTML = '';
+            
+            if (totalPages <= 1) return; // Don't show pagination for single page
+            
+            // Previous button
+            const prevLi = document.createElement('li');
+            prevLi.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a class="page-link" href="#" onclick="loadConversionProgressModal(${currentPage - 1})">Previous</a>`;
+            pagination.appendChild(prevLi);
+            
+            // Page numbers
+            for (let i = 1; i <= totalPages; i++) {
+                const li = document.createElement('li');
+                li.className = `page-item ${i === currentPage ? 'active' : ''}`;
+                li.innerHTML = `<a class="page-link" href="#" onclick="loadConversionProgressModal(${i})">${i}</a>`;
+                pagination.appendChild(li);
+            }
+            
+            // Next button
+            const nextLi = document.createElement('li');
+            nextLi.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a class="page-link" href="#" onclick="loadConversionProgressModal(${currentPage + 1})">Next</a>`;
+            pagination.appendChild(nextLi);
+        }
+
+        // Bulk delete conversions
+        async function bulkDeleteConversions() {
+            const checkboxes = document.querySelectorAll('.conversion-checkbox-modal:checked');
+            const selectedIndices = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            
+            if (selectedIndices.length === 0) {
+                alert('Please select conversion jobs to delete');
+                return;
+            }
+            
+            const confirmMessage = `Are you sure you want to delete ${selectedIndices.length} conversion job(s) from history? This will not delete the converted files.`;
+            if (!confirm(confirmMessage)) {
+                return;
+            }
+            
+            try {
+                // Delete conversion jobs one by one
+                let successCount = 0;
+                let errorCount = 0;
+                
+                for (const index of selectedIndices) {
+                    try {
+                        const conversion = window.currentConversionsData[index];
+                        if (conversion) {
+                            // Delete the conversion job from history
+                            const deleteResponse = await fetch(`/api/conversion-jobs/${conversion.job_id}/remove-from-history`, {
+                                method: 'DELETE'
+                            });
+                            
+                            if (deleteResponse.ok) {
+                                successCount++;
+                            } else {
+                                errorCount++;
+                            }
+                        } else {
+                            errorCount++;
+                        }
+                    } catch (error) {
+                        console.error('Error deleting conversion job:', error);
+                        errorCount++;
+                    }
+                }
+                
+                // Show results
+                if (successCount > 0) {
+                    alert(`Successfully deleted ${successCount} conversion job(s) from history${errorCount > 0 ? `. ${errorCount} failed.` : ''}`);
+                    
+                    // Refresh the modal data
+                    loadConversionProgressModal(currentPage);
+                    
+                    // Refresh main conversion progress data
+                    refreshConversionProgress();
+                } else {
+                    alert('Failed to delete any conversion jobs');
+                }
+                
+            } catch (error) {
+                console.error('Error in bulk delete conversions:', error);
+                alert('Error performing bulk delete operation');
+            }
+        }
+
         // Refresh status
         function refreshStatus() {
             loadStreamers();
@@ -1950,7 +2198,7 @@
                  tbody.innerHTML = '';
                  
                  if (data.conversions && data.conversions.length > 0) {
-                     data.conversions.forEach(conversion => {
+                     data.conversions.forEach((conversion, index) => {
                          const row = document.createElement('tr');
                          
                          const statusClass = conversion.status === 'completed' ? 'bg-success' : 
@@ -1964,6 +2212,9 @@
                          }
                          
                          row.innerHTML = `
+                             <td>
+                                 <input type="checkbox" class="conversion-checkbox" value="${conversion.job_id}" onchange="updateBulkDeleteConversionsButton()">
+                             </td>
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.filename}">${conversion.filename}</td>
                              <td><span class="badge ${statusClass}">${statusText}</span></td>
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}</td>
