@@ -122,7 +122,8 @@ def _ensure_conversion_settings_columns():
     try:
         cols = [r[1] for r in db.session.execute(text("PRAGMA table_info(conversion_settings)")).fetchall()]
         if "ffmpeg_preset" not in cols:
-            db.session.execute(text("ALTER TABLE conversion_settings ADD COLUMN ffmpeg_preset VARCHAR(64) NOT NULL DEFAULT :d"), {"d": DEFAULT_FFMPEG_PRESET_KEY})
+            # Use direct string value instead of parameter for SQLite compatibility
+            db.session.execute(text(f"ALTER TABLE conversion_settings ADD COLUMN ffmpeg_preset VARCHAR(64) NOT NULL DEFAULT '{DEFAULT_FFMPEG_PRESET_KEY}'"))
             db.session.commit()
             logger.info("Added ffmpeg_preset column to conversion_settings table")
     except Exception as e:
