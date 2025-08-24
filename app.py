@@ -239,10 +239,17 @@ def _build_ffmpeg_cmd(input_path, output_path, settings: ConversionSettings):
     key = getattr(settings, "ffmpeg_preset", DEFAULT_FFMPEG_PRESET_KEY)
     preset = FFMPEG_PRESETS.get(key, FFMPEG_PRESETS[DEFAULT_FFMPEG_PRESET_KEY])
 
+    # Log which preset is being used
+    logger.info(f"Building FFmpeg command with preset: {key} -> {preset['label']}")
+
     # Always include -y and -threads 0; then append preset args
     cmd = ["ffmpeg", "-hide_banner", "-y", "-i", input_path, "-threads", "0"]
     cmd += preset["args"]
     cmd += [output_path]
+    
+    # Log the full command for debugging
+    logger.info(f"FFmpeg command: {' '.join(cmd)}")
+    
     return cmd
 
 def _retry_locked(fn, *args, **kwargs):
@@ -335,6 +342,9 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
         settings = ConversionSettings()
         db.session.add(settings)
         db.session.commit()
+    
+    # Log the settings being used
+    logger.info(f"Using conversion settings - ffmpeg_preset: {getattr(settings, 'ffmpeg_preset', 'NOT_SET')}")
     
     # Build ffmpeg cmd using preset
     cmd = _build_ffmpeg_cmd(ts_path, mp4_path, settings)
