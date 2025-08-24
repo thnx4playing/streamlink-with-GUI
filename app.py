@@ -32,6 +32,18 @@ if not logger.handlers:
     logger.addHandler(fh)
     logger.addHandler(sh)
 
+# Configure dedicated conversion logger
+conversion_logger = logging.getLogger("conversion")
+conversion_logger.setLevel(logging.INFO)
+if not conversion_logger.handlers:
+    conv_fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(threadName)s CONVERSION: %(message)s")
+    conv_fh = RotatingFileHandler(f"{log_dir}/conversion.log", maxBytes=10_000_000, backupCount=5, encoding="utf-8")
+    conv_fh.setFormatter(conv_fmt)
+    conv_sh = logging.StreamHandler()
+    conv_sh.setFormatter(conv_fmt)
+    conversion_logger.addHandler(conv_fh)
+    conversion_logger.addHandler(conv_sh)
+
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your-secret-key-change-this')
@@ -240,7 +252,7 @@ def _build_ffmpeg_cmd(input_path, output_path, settings: ConversionSettings):
     preset = FFMPEG_PRESETS.get(key, FFMPEG_PRESETS[DEFAULT_FFMPEG_PRESET_KEY])
 
     # Log which preset is being used
-    logger.info(f"Building FFmpeg command with preset: {key} -> {preset['label']}")
+    conversion_logger.info(f"Building FFmpeg command with preset: {key} -> {preset['label']}")
 
     # Always include -y and -threads 0; then append preset args
     cmd = ["ffmpeg", "-hide_banner", "-y", "-i", input_path, "-threads", "0"]
@@ -248,7 +260,7 @@ def _build_ffmpeg_cmd(input_path, output_path, settings: ConversionSettings):
     cmd += [output_path]
     
     # Log the full command for debugging
-    logger.info(f"FFmpeg command: {' '.join(cmd)}")
+    conversion_logger.info(f"FFmpeg command: {' '.join(cmd)}")
     
     return cmd
 
@@ -344,13 +356,17 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
         db.session.commit()
     
     # Log the settings being used
-    logger.info(f"Using conversion settings - ffmpeg_preset: {getattr(settings, 'ffmpeg_preset', 'NOT_SET')}")
+    conversion_logger.info(f"Using conversion settings - ffmpeg_preset: {getattr(settings, 'ffmpeg_preset', 'NOT_SET')}")
     
     # Build ffmpeg cmd using preset
     cmd = _build_ffmpeg_cmd(ts_path, mp4_path, settings)
     _update_job_progress(job, "Starting ffmpeg…")
+    conversion_logger.info(f"Starting conversion job {job.id}: {os.path.basename(ts_path)} -> {os.path.basename(mp4_path)}")
+    
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        conversion_logger.info(f"FFmpeg process started with PID: {proc.pid}")
+        
         # read a few lines to keep UI alive
         last_line = ''
         while True:
@@ -359,27 +375,36 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
                 break;
             if line:
                 last_line = line.strip()
+                # Log all FFmpeg output to conversion.log
+                conversion_logger.info(f"FFmpeg output: {last_line}")
                 if 'time=' in last_line or 'frame=' in last_line:
                     _update_job_progress(job, last_line[-120:])
         rc = proc.wait()
+        conversion_logger.info(f"FFmpeg process completed with return code: {rc}")
         if rc == 0 and os.path.exists(mp4_path):
             # Re-attach to ensure we work with an attached instance
             job = db.session.get(ConversionJob, job.id)
             job.status = 'completed'
             _update_job_progress(job, f"Done: {os.path.basename(mp4_path)}")
+            conversion_logger.info(f"Conversion completed successfully: {os.path.basename(mp4_path)}")
             if job.delete_original and os.path.exists(ts_path):
-                try: os.remove(ts_path)
-                except Exception: pass
+                try: 
+                    os.remove(ts_path)
+                    conversion_logger.info(f"Deleted original file: {os.path.basename(ts_path)}")
+                except Exception as e:
+                    conversion_logger.warning(f"Failed to delete original file {os.path.basename(ts_path)}: {e}")
         else:
             # Re-attach to ensure we work with an attached instance
             job = db.session.get(ConversionJob, job.id)
             job.status = 'failed'
             _update_job_progress(job, f"ffmpeg failed (rc={rc})")
+            conversion_logger.error(f"FFmpeg conversion failed with return code {rc}")
     except Exception as e:
         # Re-attach to ensure we work with an attached instance
         job = db.session.get(ConversionJob, job.id)
         job.status = 'failed'
         _update_job_progress(job, f"Exception: {e}")
+        conversion_logger.error(f"Conversion exception: {e}")
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
@@ -414,11 +439,14 @@ def conversion_worker_loop():
                 try:
                     # Re-fetch an attached instance to ensure we work with a fresh, attached object
                     job = db.session.get(ConversionJob, job.id)
+                    conversion_logger.info(f"Starting conversion job {job.id}")
                     _start_job(job)
                     _run_ffmpeg_conversion(job)
                     _finalize_job(job)
+                    conversion_logger.info(f"Completed conversion job {job.id}")
                 except Exception as e:
                     app.logger.exception(f"Error processing job {job.id}: {e}")
+                    conversion_logger.error(f"Error processing job {job.id}: {e}")
                     # Mark job as failed if we encounter an error
                     try:
                         job = db.session.get(ConversionJob, job.id)
@@ -426,8 +454,10 @@ def conversion_worker_loop():
                         job.completed_at = _utcnow()
                         job.progress = f"Error: {str(e)}"
                         db.session.commit()
+                        conversion_logger.error(f"Marked job {job.id} as failed due to error")
                     except Exception as commit_error:
                         app.logger.exception(f"Failed to mark job {job.id} as failed: {commit_error}")
+                        conversion_logger.error(f"Failed to mark job {job.id} as failed: {commit_error}")
                 
             except Exception as e:
                 app.logger.exception("Conversion worker loop error")
