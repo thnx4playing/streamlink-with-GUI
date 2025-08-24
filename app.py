@@ -163,7 +163,7 @@ def _utcnow():
 def _eligible_conversion_jobs(batch_size=3):
     """Return next chunk of conversion jobs that should run now."""
     now = _utcnow()
-    return (
+    q = (
         ConversionJob.query
         .filter(ConversionJob.status == 'pending')
         .filter(
@@ -178,10 +178,16 @@ def _eligible_conversion_jobs(batch_size=3):
                 ),
             )
         )
-        .order_by(ConversionJob.created_at.asc())
-        .limit(batch_size)
-        .all()
     )
+    # Prefer earlier scheduled_at; if NULL (immediate jobs may be stamped 'now' or be NULL),
+    # fall back to primary key order so jobs are processed FIFO-ish.
+    try:
+        # Some SQLite builds don't support NULLS FIRST syntax via SQLAlchemy;
+        # simple two-key order is plenty here:
+        q = q.order_by(ConversionJob.scheduled_at.asc(), ConversionJob.id.asc())
+    except Exception:
+        q = q.order_by(ConversionJob.id.asc())
+    return q.limit(batch_size).all()
 
 def _update_job_progress(job, text):
     job.progress = text
