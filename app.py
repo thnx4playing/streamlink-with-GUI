@@ -161,7 +161,7 @@ FFMPEG_PRESETS = {
     },
     "remux_copy": {
         "label": "Remux Only – Copy streams (no re-encode)",
-        "args": ["-c:v","copy","-c:a","copy"],
+        "args": ["-c:v","copy","-c:a","copy","-movflags","+faststart"],
         "desc": "Fastest. No size/quality change. Use when source is already H.264/AAC."
     },
 }
@@ -195,6 +195,9 @@ class Streamer(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Recording(db.Model):
+    __table_args__ = (
+        db.Index('ix_rec_status_started', 'status', 'started_at'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     streamer_id = db.Column(db.Integer, db.ForeignKey('streamer.id'), nullable=False)
     filename = db.Column(db.String(255), nullable=False)
@@ -220,6 +223,10 @@ class ConversionSettings(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class ConversionJob(db.Model):
+    __table_args__ = (
+        db.Index('ix_cjob_status_sched', 'status', 'scheduled_at'),
+        db.Index('ix_cjob_rec_status', 'recording_id', 'status'),
+    )
     id = db.Column(db.Integer, primary_key=True)
     recording_id = db.Column(db.Integer, db.ForeignKey('recording.id'), nullable=True)  # Allow NULL for template jobs
     status = db.Column(db.String(20), default='pending')  # pending, scheduled, converting, completed, failed
@@ -314,7 +321,10 @@ def _retry_locked(fn, *args, **kwargs):
                 continue
             raise
 
-def _eligible_conversion_jobs(session, batch_size=1):
+def _eligible_conversion_jobs(session, batch_size=None):
+    if batch_size is None:
+        # Get concurrency from environment variable, default to 1
+        batch_size = int(os.getenv('CONVERSION_CONCURRENCY', '1'))
     """Return next chunk of conversion jobs that should run now."""
     now = _utcnow()
     
@@ -498,6 +508,75 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
     except Exception as e:
         conversion_logger.error(f"Conversion exception: {e}")
         raise
+
+def template_scheduler_loop():
+    """Expand due schedule templates (recording_id is NULL) into real conversion jobs."""
+    with app.app_context():
+        logger.info("Template scheduler: started")
+        while True:
+            try:
+                now = _utcnow()
+                # Templates due to run now
+                due = (db.session.query(ConversionJob)
+                       .filter(ConversionJob.recording_id.is_(None))
+                       .filter(ConversionJob.status.in_(['pending', 'scheduled']))
+                       .filter(ConversionJob.schedule_type.in_(['scheduled','daily','weekly']))
+                       .filter(ConversionJob.scheduled_at.isnot(None))
+                       .filter(ConversionJob.scheduled_at <= now)
+                       .order_by(ConversionJob.id.asc())
+                       .all())
+
+                if not due:
+                    time.sleep(1)
+                    continue
+
+                for tpl in due:
+                    # Pick recordings that look "ready to convert"
+                    ready_query = (
+                        db.session.query(Recording)
+                        .filter(Recording.status == 'completed')
+                    )
+
+                    ready = ready_query.all()
+                    created = 0
+                    for rec in ready:
+                        # Skip if there's already an active/completed job for this recording
+                        exists = (db.session.query(ConversionJob)
+                                  .filter(ConversionJob.recording_id == rec.id)
+                                  .filter(ConversionJob.status.in_(
+                                      ['pending','converting','completed']))
+                                  .first())
+                        if exists:
+                            continue
+
+                        job = ConversionJob(
+                            recording_id=rec.id,
+                            status='pending',
+                            schedule_type='immediate',        # run now; worker will pick up
+                            scheduled_at=None,
+                            custom_filename=tpl.custom_filename or '',
+                            delete_original=tpl.delete_original or False,
+                        )
+                        db.session.add(job)
+                        created += 1
+
+                    # Advance or complete the template
+                    if tpl.schedule_type == 'scheduled':
+                        tpl.status = 'completed'
+                    elif tpl.schedule_type == 'daily':
+                        tpl.scheduled_at = tpl.scheduled_at + timedelta(days=1)
+                        tpl.status = 'pending'
+                    elif tpl.schedule_type == 'weekly':
+                        tpl.scheduled_at = tpl.scheduled_at + timedelta(weeks=1)
+                        tpl.status = 'pending'
+
+                    db.session.commit()
+                    if created:
+                        logger.info(f"Template {tpl.id}: spawned {created} conversion jobs")
+
+            except Exception as e:
+                logger.exception(f"Template scheduler error: {e}")
+                time.sleep(1)
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
@@ -2110,6 +2189,12 @@ if __name__ == '__main__':
         conversion_worker_thread = threading.Thread(target=conversion_worker_loop, name="conv-worker", daemon=True)
         conversion_worker_thread.start()
         logger.info("Conversion worker thread started")
+    
+    # Start template scheduler once
+    if 'template_scheduler_thread' not in globals() or not globals().get('template_scheduler_thread').is_alive():
+        template_scheduler_thread = threading.Thread(target=template_scheduler_loop, name="template-scheduler", daemon=True)
+        template_scheduler_thread.start()
+        logger.info("Template scheduler thread started")
     
     # Get port from environment or use non-standard port
     port = int(os.getenv('PORT', 8080))

@@ -1261,6 +1261,12 @@
         let currentPage = 1;
         const perPage = 6;
 
+        // HTML escaping function for security
+        const escapeHTML = s => String(s)
+            .replaceAll('&','&amp;').replaceAll('<','&lt;')
+            .replaceAll('>','&gt;').replaceAll('"','&quot;')
+            .replaceAll("'",'&#39;');
+
                  // Initialize the application
          document.addEventListener('DOMContentLoaded', function() {
              loadStreamers();
@@ -1464,9 +1470,9 @@
                     const duration = recording.duration ? formatDuration(recording.duration) : '-';
                     const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                     
-                    const titleText = `${recording.title || 'No title'}${recording.pid ? ` • pid ${recording.pid}` : ''}`;
+                    const titleText = `${escapeHTML(recording.title || 'No title')}${recording.pid ? ` • pid ${recording.pid}` : ''}`;
                     row.innerHTML = `
-                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${streamerName}">${streamerName}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeHTML(streamerName)}">${escapeHTML(streamerName)}</td>
                         <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEasternCompact(recording.started_at)}</td>
                         <td data-bs-toggle="tooltip" data-bs-placement="top" title="${titleText}">${titleText}</td>
                         <td data-bs-toggle="tooltip" data-bs-placement="top" title="${duration}">${duration}</td>
@@ -1672,7 +1678,7 @@
                             <input type="checkbox" class="recording-checkbox-modal" value="${index}" onchange="updateBulkDeleteButton()">
                         </td>
                         <td>${streamerName}</td>
-                        <td>${recording.title || 'No title'}</td>
+                        <td>${escapeHTML(recording.title || 'No title')}</td>
                         <td>
                             <span class="badge ${statusClass}">${status}</span>
                         </td>
@@ -2138,9 +2144,9 @@
                     const duration = recording.duration ? formatDuration(recording.duration) : '-';
                     const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                     
-                    const titleText = recording.title || 'No title';
+                    const titleText = escapeHTML(recording.title || 'No title');
                     row.innerHTML = `
-                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${streamerName}">${streamerName}</td>
+                        <td data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeHTML(streamerName)}">${escapeHTML(streamerName)}</td>
                         <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEasternCompact(recording.started_at)}</td>
                         <td data-bs-toggle="tooltip" data-bs-placement="top" title="${titleText}">${titleText}</td>
                         <td data-bs-toggle="tooltip" data-bs-placement="top" title="${duration}">${duration}</td>
@@ -2668,8 +2674,8 @@
                             <td>
                                 <input type="checkbox" class="recording-checkbox" value="${recording.id}" onchange="updateConvertButton()">
                             </td>
-                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${recording.streamer_name || recording.streamer_id}">${recording.streamer_name || recording.streamer_id}</td>
-                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${recording.title || 'No title'}">${recording.title || 'No title'}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeHTML(recording.streamer_name || recording.streamer_id)}">${escapeHTML(recording.streamer_name || recording.streamer_id)}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${escapeHTML(recording.title || 'No title')}">${escapeHTML(recording.title || 'No title')}</td>
                             <td>
                                 <span class="badge ${statusClass}">${status}</span>
                             </td>
