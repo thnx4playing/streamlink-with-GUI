@@ -101,6 +101,36 @@ def _ensure_conversion_settings_columns():
 # Run schema migration
 _ensure_conversion_settings_columns()
 
+# --- FFmpeg Presets used by the conversion worker ---
+FFMPEG_PRESETS = {
+    "default_h264_aac": {
+        "label": "Default – H.264 CRF 23 / AAC 128k (preset=medium)",
+        "args": ["-c:v","libx264","-preset","medium","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart"],
+        "desc": "Good quality, much smaller than source. Recommended default."
+    },
+    "smaller_h264_aac": {
+        "label": "Smaller – H.264 CRF 26 / AAC 96k (preset=slow)",
+        "args": ["-c:v","libx264","-preset","slow","-crf","26","-c:a","aac","-b:a","96k","-movflags","+faststart"],
+        "desc": "Prioritizes smaller files with a modest quality hit. Slower encode."
+    },
+    "higher_h264_aac": {
+        "label": "Higher Quality – H.264 CRF 20 / AAC 160k (preset=slow)",
+        "args": ["-c:v","libx264","-preset","slow","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart"],
+        "desc": "Better quality, larger files. Slower encode."
+    },
+    "cap720_h264_aac": {
+        "label": "720p Cap – H.264 CRF 23 / AAC 128k + downscale to 720p",
+        "args": ["-vf","scale=-2:720","-c:v","libx264","-preset","medium","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart"],
+        "desc": "Downscales tall videos to max 720p height to save space."
+    },
+    "remux_copy": {
+        "label": "Remux Only – Copy streams (no re-encode)",
+        "args": ["-c:v","copy","-c:a","copy"],
+        "desc": "Fastest. No size/quality change. Use when source is already H.264/AAC."
+    },
+}
+DEFAULT_FFMPEG_PRESET_KEY = "default_h264_aac"
+
 # Database Models
 class Streamer(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -171,36 +201,6 @@ class AppConfig:
         self.telegram_bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.game_list = os.getenv('GAME_LIST', '')
-
-# --- FFmpeg Presets used by the conversion worker ---
-FFMPEG_PRESETS = {
-    "default_h264_aac": {
-        "label": "Default – H.264 CRF 23 / AAC 128k (preset=medium)",
-        "args": ["-c:v","libx264","-preset","medium","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart"],
-        "desc": "Good quality, much smaller than source. Recommended default."
-    },
-    "smaller_h264_aac": {
-        "label": "Smaller – H.264 CRF 26 / AAC 96k (preset=slow)",
-        "args": ["-c:v","libx264","-preset","slow","-crf","26","-c:a","aac","-b:a","96k","-movflags","+faststart"],
-        "desc": "Prioritizes smaller files with a modest quality hit. Slower encode."
-    },
-    "higher_h264_aac": {
-        "label": "Higher Quality – H.264 CRF 20 / AAC 160k (preset=slow)",
-        "args": ["-c:v","libx264","-preset","slow","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart"],
-        "desc": "Better quality, larger files. Slower encode."
-    },
-    "cap720_h264_aac": {
-        "label": "720p Cap – H.264 CRF 23 / AAC 128k + downscale to 720p",
-        "args": ["-vf","scale=-2:720","-c:v","libx264","-preset","medium","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart"],
-        "desc": "Downscales tall videos to max 720p height to save space."
-    },
-    "remux_copy": {
-        "label": "Remux Only – Copy streams (no re-encode)",
-        "args": ["-c:v","copy","-c:a","copy"],
-        "desc": "Fastest. No size/quality change. Use when source is already H.264/AAC."
-    },
-}
-DEFAULT_FFMPEG_PRESET_KEY = "default_h264_aac"
 
 # Global variables for managing recording processes
 recording_processes = {}
