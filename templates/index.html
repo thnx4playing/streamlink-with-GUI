@@ -1808,10 +1808,10 @@
             const scheduleType = document.getElementById('schedule-type').value;
             const scheduledTimeGroup = document.getElementById('scheduled-time-group');
             
-            // Hide scheduled time for manual conversions
-            if (scheduleType === 'manual') {
+            // Hide scheduled time for immediate conversions
+            if (scheduleType === 'immediate') {
                 scheduledTimeGroup.style.display = 'none';
-                // Clear scheduled time when switching to manual
+                // Clear scheduled time when switching to immediate
                 document.getElementById('scheduled-time').value = '';
             } else {
                 scheduledTimeGroup.style.display = 'block';
@@ -1842,16 +1842,16 @@
                                            conversion.status === 'failed' ? 'bg-danger' : 
                                            conversion.status === 'converting' ? 'bg-warning' : 'bg-secondary';
                          
-                         // Show "Queued" for immediate jobs that are pending
+                         // Show "Queued" for immediate/manual jobs that are pending
                          let statusText = conversion.status.toUpperCase();
-                         if (conversion.status === 'pending' && conversion.schedule_type === 'immediate') {
+                         if (conversion.status === 'pending' && (conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual')) {
                              statusText = 'QUEUED';
                          }
                          
                          row.innerHTML = `
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.filename}">${conversion.filename}</td>
                              <td><span class="badge ${statusClass}">${statusText}</span></td>
-                             <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? (conversion.schedule_type === 'immediate' ? 'Queued…' : 'Scheduled…') : '—')}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? (conversion.schedule_type === 'immediate' ? 'Queued…' : 'Scheduled…') : '—')}</td>
+                             <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}</td>
                              <td>${conversion.schedule_type || 'immediate'}</td>
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.output_filename || '-'}">${conversion.output_filename || '-'}</td>
                              <td>
@@ -2329,7 +2329,7 @@
                 if (savedOptions) {
                     const options = JSON.parse(savedOptions);
                     
-                    document.getElementById('schedule-type').value = options.schedule_type || 'manual';
+                    document.getElementById('schedule-type').value = options.schedule_type || 'immediate';
                     document.getElementById('scheduled-time').value = options.scheduled_time || '';
                     document.getElementById('conversion-custom-filename').value = options.custom_filename || '';
                 }
@@ -2337,9 +2337,9 @@
                 // Apply schedule type visibility rules
                 toggleScheduleOptions();
                 
-                // Clear scheduled time if schedule type is manual
+                // Clear scheduled time if schedule type is immediate
                 const scheduleType = document.getElementById('schedule-type').value;
-                if (scheduleType === 'manual') {
+                if (scheduleType === 'immediate') {
                     document.getElementById('scheduled-time').value = '';
                 }
             } catch (error) {
