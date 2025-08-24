@@ -98,8 +98,9 @@ def _ensure_conversion_settings_columns():
     except Exception as e:
         logger.warning(f"Schema migration failed: {e}")
 
-# Run schema migration
-_ensure_conversion_settings_columns()
+# Run schema migration within app context
+with app.app_context():
+    _ensure_conversion_settings_columns()
 
 # --- FFmpeg Presets used by the conversion worker ---
 FFMPEG_PRESETS = {
