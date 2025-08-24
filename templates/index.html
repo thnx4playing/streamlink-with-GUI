@@ -2175,7 +2175,7 @@
                                     }
                                     ${actualStatus === 'completed' && conversion.output_filename ? 
                                         `<button class="btn btn-sm btn-outline-danger" onclick="deleteConvertedFile(${conversion.job_id})" title="Delete converted file">
-                                            <i class="fas fa-file-video"></i>
+                                            <i class="fas fa-trash"></i>
                                         </button>` : ''
                                     }
                                     <button class="btn btn-sm btn-outline-secondary" onclick="removeConversionJobFromHistory(${conversion.job_id})" 
@@ -2583,11 +2583,11 @@
                                              <i class="fas fa-times"></i>
                                          </button>` : ''
                                      }
-                                     ${actualStatus === 'completed' && conversion.output_filename ? 
-                                         `<button class="btn btn-sm btn-outline-danger" onclick="deleteConvertedFile(${conversion.job_id})" title="Delete converted file">
-                                             <i class="fas fa-file-video"></i>
-                                         </button>` : ''
-                                     }
+                                                                         ${actualStatus === 'completed' && conversion.output_filename ? 
+                                        `<button class="btn btn-sm btn-outline-danger" onclick="deleteConvertedFile(${conversion.job_id})" title="Delete converted file">
+                                            <i class="fas fa-trash"></i>
+                                        </button>` : ''
+                                    }
                                                                            <button class="btn btn-sm btn-outline-secondary" onclick="removeConversionJobFromHistory(${conversion.job_id})" 
                                               title="Remove from history">
                                           <i class="fas fa-history"></i>
@@ -2736,12 +2736,12 @@
                         // Mark as deleted
                         deletedFiles.add(jobId);
                         
-                        // Update the button to show it's deleted
+                        // Update the button to show it's deleted but keep it visible
                         const deleteBtn = document.querySelector(`button[onclick="deleteConvertedFile(${jobId})"]`);
                         if (deleteBtn) {
                             deleteBtn.className = 'btn btn-sm btn-secondary';
                             deleteBtn.disabled = true;
-                            deleteBtn.innerHTML = '<i class="fas fa-check"></i>';
+                            deleteBtn.innerHTML = '<i class="fas fa-trash"></i>';
                             deleteBtn.title = 'File deleted';
                             deleteBtn.onclick = null; // Remove onclick to prevent re-clicking
                         }
