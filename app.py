@@ -66,6 +66,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # SQLite engine options for thread safety and busy timeout
 app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {
+    "pool_pre_ping": True,
     "connect_args": {
         "check_same_thread": False,   # required since we use threads
         "timeout": 30,                # sqlite busy timeout in seconds
@@ -85,6 +86,20 @@ with app.app_context():
         db.session.commit()
     except Exception as e:
         app.logger.warning(f"SQLite PRAGMA init failed: {e}")
+
+def _ensure_conversion_settings_columns():
+    """Add ffmpeg_preset column if not present (SQLite compatible)"""
+    try:
+        cols = [r[1] for r in db.session.execute(text("PRAGMA table_info(conversion_settings)")).fetchall()]
+        if "ffmpeg_preset" not in cols:
+            db.session.execute(text("ALTER TABLE conversion_settings ADD COLUMN ffmpeg_preset VARCHAR(64) NOT NULL DEFAULT :d"), {"d": DEFAULT_FFMPEG_PRESET_KEY})
+            db.session.commit()
+            logger.info("Added ffmpeg_preset column to conversion_settings table")
+    except Exception as e:
+        logger.warning(f"Schema migration failed: {e}")
+
+# Run schema migration
+_ensure_conversion_settings_columns()
 
 # Database Models
 class Streamer(db.Model):
@@ -118,6 +133,7 @@ class ConversionSettings(db.Model):
     naming_scheme = db.Column(db.String(50), default='streamer_date_title')
     custom_filename_template = db.Column(db.String(500))  # New: custom naming template
     delete_original_after_conversion = db.Column(db.Boolean, default=False)  # New: delete original option
+    ffmpeg_preset = db.Column(db.String(64), nullable=False, default=DEFAULT_FFMPEG_PRESET_KEY)  # New: ffmpeg preset key
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -156,6 +172,36 @@ class AppConfig:
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.game_list = os.getenv('GAME_LIST', '')
 
+# --- FFmpeg Presets used by the conversion worker ---
+FFMPEG_PRESETS = {
+    "default_h264_aac": {
+        "label": "Default – H.264 CRF 23 / AAC 128k (preset=medium)",
+        "args": ["-c:v","libx264","-preset","medium","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart"],
+        "desc": "Good quality, much smaller than source. Recommended default."
+    },
+    "smaller_h264_aac": {
+        "label": "Smaller – H.264 CRF 26 / AAC 96k (preset=slow)",
+        "args": ["-c:v","libx264","-preset","slow","-crf","26","-c:a","aac","-b:a","96k","-movflags","+faststart"],
+        "desc": "Prioritizes smaller files with a modest quality hit. Slower encode."
+    },
+    "higher_h264_aac": {
+        "label": "Higher Quality – H.264 CRF 20 / AAC 160k (preset=slow)",
+        "args": ["-c:v","libx264","-preset","slow","-crf","20","-c:a","aac","-b:a","160k","-movflags","+faststart"],
+        "desc": "Better quality, larger files. Slower encode."
+    },
+    "cap720_h264_aac": {
+        "label": "720p Cap – H.264 CRF 23 / AAC 128k + downscale to 720p",
+        "args": ["-vf","scale=-2:720","-c:v","libx264","-preset","medium","-crf","23","-c:a","aac","-b:a","128k","-movflags","+faststart"],
+        "desc": "Downscales tall videos to max 720p height to save space."
+    },
+    "remux_copy": {
+        "label": "Remux Only – Copy streams (no re-encode)",
+        "args": ["-c:v","copy","-c:a","copy"],
+        "desc": "Fastest. No size/quality change. Use when source is already H.264/AAC."
+    },
+}
+DEFAULT_FFMPEG_PRESET_KEY = "default_h264_aac"
+
 # Global variables for managing recording processes
 recording_processes = {}
 recording_threads = {}
@@ -177,6 +223,17 @@ def get_converted_path():
 
 def _utcnow():
     return datetime.utcnow()
+
+def _build_ffmpeg_cmd(input_path, output_path, settings: ConversionSettings):
+    """Build FFmpeg command using the selected preset"""
+    key = getattr(settings, "ffmpeg_preset", DEFAULT_FFMPEG_PRESET_KEY)
+    preset = FFMPEG_PRESETS.get(key, FFMPEG_PRESETS[DEFAULT_FFMPEG_PRESET_KEY])
+
+    # Always include -y and -threads 0; then append preset args
+    cmd = ["ffmpeg", "-hide_banner", "-y", "-i", input_path, "-threads", "0"]
+    cmd += preset["args"]
+    cmd += [output_path]
+    return cmd
 
 def _retry_locked(fn, *args, **kwargs):
     """Retry function with backoff for transient 'database is locked' errors"""
@@ -256,8 +313,16 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
     out_dir = get_converted_path()
     base_name = job.custom_filename.strip() if job.custom_filename else rec.filename
     mp4_path = os.path.join(out_dir, f"{base_name}.mp4")
-    # Build ffmpeg cmd
-    cmd = ["ffmpeg", "-y", "-i", ts_path, "-c", "copy", "-movflags", "+faststart", mp4_path]
+    
+    # Get conversion settings for preset
+    settings = ConversionSettings.query.first()
+    if not settings:
+        settings = ConversionSettings()
+        db.session.add(settings)
+        db.session.commit()
+    
+    # Build ffmpeg cmd using preset
+    cmd = _build_ffmpeg_cmd(ts_path, mp4_path, settings)
     _update_job_progress(job, "Starting ffmpeg…")
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -301,6 +366,8 @@ def conversion_worker_loop():
                     conversion_wakeup.clear()
                     continue
                 for job in jobs:
+                    # Expunge job from session to avoid holding DB connection during FFmpeg
+                    db.session.expunge(job)
                     # Mark job as started and commit quickly
                     _retry_locked(_start_job, job)
                     # Run the actual conversion (long-running)
@@ -1173,7 +1240,12 @@ def get_conversion_settings():
             'output_volume_path': get_converted_path(),
             'naming_scheme': settings.naming_scheme,
             'custom_filename_template': settings.custom_filename_template or '',
-            'delete_original_after_conversion': settings.delete_original_after_conversion
+            'delete_original_after_conversion': settings.delete_original_after_conversion,
+            'ffmpeg_preset': settings.ffmpeg_preset,  # NEW
+            'available_presets': [
+                {"key": k, "label": v["label"], "desc": v["desc"]}
+                for k, v in FFMPEG_PRESETS.items()
+            ],  # NEW
         }
         logger.info(f"Returning settings: {response_data}")
         return jsonify(response_data)
@@ -1194,6 +1266,14 @@ def save_conversion_settings():
     # Don't save volume paths as they're now environment variables
     settings.custom_filename_template = data.get('custom_filename_template', '')
     settings.delete_original_after_conversion = data.get('delete_original_after_conversion', False)
+    
+    # NEW: preset validation and saving
+    if "ffmpeg_preset" in data:
+        key = data["ffmpeg_preset"]
+        if key not in FFMPEG_PRESETS:
+            return jsonify({"error": "Invalid ffmpeg_preset"}), 400
+        settings.ffmpeg_preset = key
+    
     settings.updated_at = datetime.utcnow()
     
     db.session.commit()

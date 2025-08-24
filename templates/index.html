@@ -1056,6 +1056,13 @@
                                         <small class="form-text text-muted">Use variables: {streamer}, {twitch_name}, {title}, {date}, {time}, {datetime}, {game}</small>
                                     </div>
                                     <div class="mb-3">
+                                        <label for="ffmpegPreset" class="form-label fw-bold">FFmpeg Preset</label>
+                                        <select class="form-select" id="ffmpegPreset">
+                                            <!-- Options will be populated by JavaScript -->
+                                        </select>
+                                        <small id="ffmpegPresetHelp" class="form-text text-muted"></small>
+                                    </div>
+                                    <div class="mb-3">
                                         <div class="form-check">
                                             <input class="form-check-input" type="checkbox" id="delete-original-after-conversion">
                                             <label class="form-check-label" for="delete-original-after-conversion">
@@ -2223,7 +2230,31 @@
                 document.getElementById('conversion-volume-path-display').textContent = settings.volume_path || 'Not set';
                 document.getElementById('output-volume-path-display').textContent = settings.output_volume_path || 'Not set';
                 
-                // Update form elements
+                // Populate FFmpeg preset dropdown
+                const sel = document.getElementById('ffmpegPreset');
+                sel.innerHTML = ''; // clear
+                if (settings.available_presets) {
+                    settings.available_presets.forEach(p => {
+                        const opt = document.createElement('option');
+                        opt.value = p.key;
+                        opt.textContent = p.label;
+                        opt.dataset.desc = p.desc;
+                        sel.appendChild(opt);
+                    });
+                }
+                
+                // Set selected preset
+                sel.value = settings.ffmpeg_preset || 'default_h264_aac';
+                document.getElementById('ffmpegPresetHelp').textContent = 
+                    sel.selectedOptions[0]?.dataset.desc || '';
+                
+                // Add change listener for preset description
+                sel.addEventListener('change', () => {
+                    document.getElementById('ffmpegPresetHelp').textContent = 
+                        sel.selectedOptions[0]?.dataset.desc || '';
+                });
+                
+                // Update other form elements
                 const elements = {
                     'custom-filename-template': settings.custom_filename_template || '',
                     'delete-original-after-conversion': settings.delete_original_after_conversion || false
@@ -2252,7 +2283,8 @@
         async function saveConversionSettings() {
             const settings = {
                 custom_filename_template: document.getElementById('custom-filename-template').value,
-                delete_original_after_conversion: document.getElementById('delete-original-after-conversion').checked
+                delete_original_after_conversion: document.getElementById('delete-original-after-conversion').checked,
+                ffmpeg_preset: document.getElementById('ffmpegPreset').value
             };
             
             try {
