@@ -167,10 +167,10 @@ def _eligible_conversion_jobs(session, batch_size=3):
             .filter(ConversionJob.status == 'pending')
             .filter(
                 db.or_(
-                    # Manual jobs: run regardless of scheduled_at
-                    ConversionJob.schedule_type == 'manual',
+                    # Immediate jobs: run regardless of scheduled_at
+                    ConversionJob.schedule_type == 'immediate',
                     # Scheduled jobs: run when due
-                    db.and_(ConversionJob.schedule_type != 'manual',
+                    db.and_(ConversionJob.schedule_type != 'immediate',
                             ConversionJob.scheduled_at <= now)
                 )
             )
@@ -1176,7 +1176,8 @@ def convert_recordings():
     """API endpoint to start conversion of recordings"""
     data = request.get_json()
     recording_ids = data.get('recording_ids', [])
-    schedule_type = data.get('schedule_type', 'manual')  # manual, scheduled, daily, weekly
+    # Use "immediate" for manual Convert Selected; "scheduled" remains for future runs
+    schedule_type = data.get('schedule_type', 'immediate')  # immediate, scheduled, daily, weekly
     scheduled_time = data.get('scheduled_time')  # ISO format string
     custom_filename = data.get('custom_filename', '')  # Custom filename template
     
@@ -1205,9 +1206,9 @@ def convert_recordings():
             scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
         except ValueError:
             return jsonify({'error': 'Invalid scheduled time format'}), 400
-    if schedule_type == 'manual':
-        # Immediate conversion: queue for "now"
-        scheduled_datetime = scheduled_datetime or _utcnow()
+    # For immediate jobs, make them due right away so the worker can pick them up
+    if schedule_type == 'immediate' and not scheduled_datetime:
+        scheduled_datetime = datetime.utcnow()
     
     # Debug logging
     logger.info(f"Conversion request - schedule_type: {schedule_type}, scheduled_time: {scheduled_time}, scheduled_datetime: {scheduled_datetime}")
@@ -1230,12 +1231,10 @@ def convert_recordings():
     # Nudge the background worker
     conversion_wakeup.set()
     
-    if schedule_type == 'manual':
-        msg = 'Conversion queued to start now'
-    elif scheduled_datetime:
-        msg = f'Conversion scheduled for {scheduled_datetime}'
-    else:
-        msg = 'Conversion scheduled'
+    # Message that matches manual vs scheduled
+    msg = 'Conversion queued to start now' if schedule_type == 'immediate' else (
+        f'Conversion scheduled for {scheduled_datetime}' if scheduled_datetime else 'Conversion scheduled'
+    )
     return jsonify({'message': msg})
 
 @app.route('/health')
