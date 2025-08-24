@@ -2236,14 +2236,14 @@
                 console.log('Output path element found:', !!outputPathElement);
                 
                 if (volumePathElement) {
-                    const displayPath = '/app/download';
                     const realPath = settings.volume_path || 'Not set';
-                    volumePathElement.textContent = `${displayPath} (${realPath})`;
+                    const containerPath = '/app/download';
+                    volumePathElement.textContent = `${realPath} (${containerPath})`;
                 }
                 if (outputPathElement) {
-                    const displayPath = '/app/converted';
                     const realPath = settings.output_volume_path || 'Not set';
-                    outputPathElement.textContent = `${displayPath} (${realPath})`;
+                    const containerPath = '/app/converted';
+                    outputPathElement.textContent = `${realPath} (${containerPath})`;
                 }
                 
                 // Populate FFmpeg preset dropdown
