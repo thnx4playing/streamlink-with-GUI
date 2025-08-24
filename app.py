@@ -394,11 +394,11 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
     out_dir = get_converted_path()
     
     # Get conversion settings for naming template
-    settings = ConversionSettings.query.first()
+    settings = session.query(ConversionSettings).first()
     if not settings:
         settings = ConversionSettings()
-        db.session.add(settings)
-        db.session.commit()
+        session.add(settings)
+        session.commit()
     
     # Build filename using conversion settings template or fallback to job custom filename
     if settings.custom_filename_template and settings.custom_filename_template.strip():
@@ -427,7 +427,7 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
     
     # Build ffmpeg cmd using preset
     cmd = _build_ffmpeg_cmd(ts_path, mp4_path, settings)
-    _update_job_progress(job, "Starting ffmpeg…")
+    _update_job_progress(job, "Starting ffmpeg…", session)
     conversion_logger.info(f"Starting conversion job {job.id}: {os.path.basename(ts_path)} -> {os.path.basename(mp4_path)}")
     
     try:
