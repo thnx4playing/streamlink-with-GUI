@@ -1601,6 +1601,33 @@ def create_schedule_template():
         db.session.rollback()
         return jsonify({'error': f'Failed to create schedule template: {str(e)}'}), 500
 
+@app.route('/api/schedule-template', methods=['GET'])
+def get_schedule_templates():
+    """API endpoint to get active schedule templates (not conversion jobs)"""
+    try:
+        # Get only template jobs (recording_id is None) that are actual schedules
+        templates = ConversionJob.query.filter(
+            ConversionJob.recording_id.is_(None),  # Template jobs only
+            ConversionJob.schedule_type.in_(['daily', 'weekly', 'custom', 'scheduled'])  # Actual schedules only
+        ).order_by(ConversionJob.scheduled_at.asc()).all()
+        
+        templates_data = []
+        for template in templates:
+            templates_data.append({
+                'id': template.id,
+                'schedule_type': template.schedule_type,
+                'scheduled_at': template.scheduled_at.isoformat() + 'Z' if template.scheduled_at else None,
+                'custom_filename': template.custom_filename,
+                'status': template.status,
+                'next_run': template.scheduled_at.isoformat() + 'Z' if template.scheduled_at else None
+            })
+        
+        logger.info(f"Returning {len(templates_data)} schedule templates")
+        return jsonify({'templates': templates_data})
+    except Exception as e:
+        logger.error(f"Error getting schedule templates: {e}")
+        return jsonify({'error': f'Failed to get schedule templates: {str(e)}'}), 500
+
 
 
 def convert_ts_to_mp4(input_file, output_file, job):

@@ -1981,6 +1981,27 @@
             }
         }
 
+        // Remove schedule template
+        async function removeScheduleTemplate(templateId) {
+            if (confirm('Are you sure you want to remove this schedule template?')) {
+                try {
+                    const response = await fetch(`/api/conversion-jobs/${templateId}/remove-from-history`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (response.ok) {
+                        loadScheduledTasks();
+                    } else {
+                        const error = await response.json();
+                        alert('Error: ' + error.error);
+                    }
+                } catch (error) {
+                    console.error('Error removing schedule template:', error);
+                    alert('Error removing schedule template');
+                }
+            }
+        }
+
         // Delete converted file
         async function deleteConvertedFile(jobId) {
             if (confirm('Are you sure you want to delete the converted file? This action cannot be undone.')) {
@@ -2034,7 +2055,7 @@
         async function loadScheduledTasks() {
             try {
                 console.log('Loading scheduled tasks...');
-                const response = await fetch('/api/conversion-progress?per_page=5');  // Show only 5 most recent
+                const response = await fetch('/api/schedule-template');
                 
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -2045,58 +2066,33 @@
                 
                 const tasksList = document.getElementById('scheduled-tasks-list');
                 
-                // Filter to show only actual scheduled tasks (not immediate conversions)
-                const scheduledJobs = (data.conversions || []).filter(job => 
-                    job.schedule_type && 
-                    job.schedule_type !== 'immediate' && 
-                    job.schedule_type !== 'manual'
-                );
+                const templates = data.templates || [];
                 
-                if (scheduledJobs.length > 0) {
+                if (templates.length > 0) {
                     tasksList.innerHTML = '';
-                    scheduledJobs.forEach(job => {
+                    templates.forEach(template => {
                         const row = document.createElement('tr');
                         
-                        // Determine status badge color
-                        let statusClass = 'bg-secondary';
-                        let statusText = job.status || 'Unknown';
+                        // Format schedule type for display
+                        let scheduleTypeDisplay = template.schedule_type;
+                        if (template.schedule_type === 'daily') scheduleTypeDisplay = 'Daily';
+                        else if (template.schedule_type === 'weekly') scheduleTypeDisplay = 'Weekly';
+                        else if (template.schedule_type === 'custom') scheduleTypeDisplay = 'One-time';
+                        else if (template.schedule_type === 'scheduled') scheduleTypeDisplay = 'Scheduled';
                         
-                        switch (job.status) {
-                            case 'pending':
-                                statusClass = 'bg-warning';
-                                statusText = 'Scheduled';
-                                break;
-                            case 'converting':
-                                statusClass = 'bg-info';
-                                statusText = 'Running';
-                                break;
-                            case 'completed':
-                                statusClass = 'bg-success';
-                                statusText = 'Finished';
-                                break;
-                            case 'failed':
-                                statusClass = 'bg-danger';
-                                statusText = 'Failed';
-                                break;
-                        }
-                        
-                        const scheduledDate = job.scheduled_at ? formatDateEasternCompact(job.scheduled_at) : 'No date';
-                        const lastRunDate = job.completed_at ? formatDateEasternCompact(job.completed_at) : 
-                                           (job.started_at ? formatDateEasternCompact(job.started_at) : 'Pending');
-                        const lastRunStatus = job.status === 'completed' ? 'Completed' : 
-                                             (job.status === 'failed' ? 'Failed' : 
-                                             (job.status === 'converting' ? 'Running' : 'Pending'));
+                        const nextRunDate = template.next_run ? formatDateEasternCompact(template.next_run) : 'Not set';
+                        const customFilename = template.custom_filename || 'Default naming';
                         
                         row.innerHTML = `
-                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${job.filename || 'Template Task'}">${job.filename || 'Template Task'}</td>
-                            <td>${job.schedule_type || 'Manual'}</td>
-                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${job.scheduled_at ? formatDateEastern(job.scheduled_at) : 'No schedule'}">${scheduledDate}</td>
-                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${lastRunStatus === 'Pending' ? 'Pending' : `${formatDateEastern(job.completed_at || job.started_at)} (${lastRunStatus})`}">${lastRunDate}</td>
-                            <td><span class="badge ${statusClass}">${statusText}</span></td>
-                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${job.progress || 'No progress info'}">${job.progress || 'No progress info'}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${customFilename}">${customFilename}</td>
+                            <td>${scheduleTypeDisplay}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${template.next_run ? formatDateEastern(template.next_run) : 'No schedule'}">${nextRunDate}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="Active">Active</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="Schedule template">Schedule template</td>
                             <td>
-                                <button class="btn btn-sm btn-outline-danger" onclick="removeConversionJobFromHistory(${job.job_id})" 
-                                        title="Remove from history">
+                                <button class="btn btn-sm btn-outline-danger" onclick="removeScheduleTemplate(${template.id})" 
+                                        title="Remove schedule">
                                     <i class="fas fa-trash"></i>
                                 </button>
                             </td>
@@ -2107,7 +2103,7 @@
                     // Reinitialize tooltips for the new table rows
                     initializeTooltips();
                 } else {
-                    tasksList.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No scheduled conversion tasks</td></tr>';
+                    tasksList.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No active schedule templates</td></tr>';
                 }
             } catch (error) {
                 console.error('Error loading scheduled tasks:', error);
