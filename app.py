@@ -260,7 +260,8 @@ def _retry_locked(fn, *args, **kwargs):
 def _eligible_conversion_jobs(batch_size=3):
     """Return next chunk of conversion jobs that should run now."""
     now = _utcnow()
-    q = (
+    # Pick the oldest eligible pending job - simplified query
+    job = (
         ConversionJob.query
         .filter(ConversionJob.status == 'pending')
         .filter(
@@ -275,16 +276,10 @@ def _eligible_conversion_jobs(batch_size=3):
                 ),
             )
         )
+        .order_by(ConversionJob.id.asc())
+        .first()
     )
-    # Prefer earlier scheduled_at; if NULL (immediate jobs may be stamped 'now' or be NULL),
-    # fall back to primary key order so jobs are processed FIFO-ish.
-    try:
-        # Some SQLite builds don't support NULLS FIRST syntax via SQLAlchemy;
-        # simple two-key order is plenty here:
-        q = q.order_by(ConversionJob.scheduled_at.asc(), ConversionJob.id.asc())
-    except Exception:
-        q = q.order_by(ConversionJob.id.asc())
-    return q.limit(batch_size).all()
+    return [job] if job else []
 
 def _update_job_progress(job, text):
     job.progress = text
@@ -362,39 +357,52 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
-    ctx = app.app_context()
-    ctx.push()
-    logger.info("Conversion worker: started (app context bound)")
-    try:
+    with app.app_context():
+        logger.info("Conversion worker: started (app context bound)")
         while True:
             try:
-                # Use retry mechanism for database operations
-                jobs = _retry_locked(_eligible_conversion_jobs)
-                if not jobs:
-                    # Sleep lightly but allow immediate wake-up when new jobs are queued
-                    conversion_wakeup.wait(timeout=5)
-                    conversion_wakeup.clear()
+                # Pick the oldest eligible pending job
+                job = (
+                    ConversionJob.query
+                    .filter(ConversionJob.status == 'pending')
+                    .filter(
+                        db.or_(
+                            # Manual/immediate jobs: run regardless of scheduled_at
+                            ConversionJob.schedule_type.in_(['manual', 'immediate']),
+                            # Scheduled jobs: run when due
+                            db.and_(
+                                ConversionJob.schedule_type.notin_(['manual', 'immediate']),
+                                ConversionJob.scheduled_at.isnot(None),
+                                ConversionJob.scheduled_at <= _utcnow(),
+                            ),
+                        )
+                    )
+                    .order_by(ConversionJob.id.asc())
+                    .first()
+                )
+                
+                if not job:
+                    time.sleep(1)
                     continue
-                for job in jobs:
-                    # Expunge job from session to avoid holding DB connection during FFmpeg
-                    db.session.expunge(job)
-                    # Mark job as started and commit quickly
-                    _retry_locked(_start_job, job)
-                    # Run the actual conversion (long-running)
-                    _run_ffmpeg_conversion(job)
-                    # Mark job as completed/failed and commit quickly
-                    _retry_locked(_finalize_job, job)
+                
+                # Flip to converting + started_at here
+                job.status = 'converting'
+                job.started_at = _utcnow()
+                db.session.commit()
+                
+                # Run the actual conversion (long-running)
+                _run_ffmpeg_conversion(job)
+                
+                # Mark job as completed/failed and commit quickly
+                job.completed_at = _utcnow()
+                db.session.commit()
+                
             except Exception as e:
-                logger.exception("Conversion worker loop error: %s", e)
-                time.sleep(2)
+                app.logger.exception("Conversion worker loop error")
+                time.sleep(1)
             finally:
                 # Ensure each iteration has a clean session (thread-safe)
                 db.session.remove()
-    finally:
-        try:
-            ctx.pop()
-        except Exception:
-            pass
 
 def get_recording_status(recording):
     """Determine the actual status of a recording based on file existence and extension"""

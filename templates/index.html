@@ -1884,13 +1884,16 @@
                     data.conversions.forEach((conversion, index) => {
                         const row = document.createElement('tr');
                         
-                        const statusClass = conversion.status === 'completed' ? 'bg-success' : 
-                                          conversion.status === 'failed' ? 'bg-danger' : 
-                                          conversion.status === 'converting' ? 'bg-warning' : 'bg-secondary';
+                        // Determine actual status - if pending but started_at is set, treat as converting
+                        const actualStatus = (conversion.status === 'pending' && conversion.started_at) ? 'converting' : conversion.status;
+                        
+                        const statusClass = actualStatus === 'completed' ? 'bg-success' : 
+                                          actualStatus === 'failed' ? 'bg-danger' : 
+                                          actualStatus === 'converting' ? 'bg-warning' : 'bg-secondary';
                         
                         // Show "Queued" for immediate/manual jobs that are pending
-                        let statusText = conversion.status.toUpperCase();
-                        if (conversion.status === 'pending' && (conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual')) {
+                        let statusText = actualStatus.toUpperCase();
+                        if (actualStatus === 'pending' && (conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual')) {
                             statusText = 'QUEUED';
                         }
                         
@@ -1900,17 +1903,17 @@
                             </td>
                             <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.filename}">${conversion.filename}</td>
                             <td><span class="badge ${statusClass}">${statusText}</span></td>
-                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (actualStatus === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : (actualStatus === 'converting' ? 'Initializing…' : '—'))}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (actualStatus === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : (actualStatus === 'converting' ? 'Initializing…' : '—'))}</td>
                             <td>${conversion.schedule_type || 'immediate'}</td>
                             <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.output_filename || '-'}">${conversion.output_filename || '-'}</td>
                             <td>
                                 <div class="d-flex gap-1 justify-content-center">
-                                    ${conversion.status !== 'completed' && conversion.status !== 'failed' ? 
+                                    ${actualStatus !== 'completed' && actualStatus !== 'failed' ? 
                                         `<button class="btn btn-sm btn-outline-danger" onclick="cancelConversionJob(${conversion.job_id})" title="Cancel conversion">
                                             <i class="fas fa-times"></i>
                                         </button>` : ''
                                     }
-                                    ${conversion.status === 'completed' && conversion.output_filename ? 
+                                    ${actualStatus === 'completed' && conversion.output_filename ? 
                                         `<button class="btn btn-sm btn-outline-danger" onclick="deleteConvertedFile(${conversion.job_id})" title="Delete converted file">
                                             <i class="fas fa-file-video"></i>
                                         </button>` : ''
@@ -2285,13 +2288,16 @@
                      data.conversions.forEach((conversion, index) => {
                          const row = document.createElement('tr');
                          
-                         const statusClass = conversion.status === 'completed' ? 'bg-success' : 
-                                           conversion.status === 'failed' ? 'bg-danger' : 
-                                           conversion.status === 'converting' ? 'bg-warning' : 'bg-secondary';
+                         // Determine actual status - if pending but started_at is set, treat as converting
+                         const actualStatus = (conversion.status === 'pending' && conversion.started_at) ? 'converting' : conversion.status;
+                         
+                         const statusClass = actualStatus === 'completed' ? 'bg-success' : 
+                                           actualStatus === 'failed' ? 'bg-danger' : 
+                                           actualStatus === 'converting' ? 'bg-warning' : 'bg-secondary';
                          
                          // Show "Queued" for immediate/manual jobs that are pending
-                         let statusText = conversion.status.toUpperCase();
-                         if (conversion.status === 'pending' && (conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual')) {
+                         let statusText = actualStatus.toUpperCase();
+                         if (actualStatus === 'pending' && (conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual')) {
                              statusText = 'QUEUED';
                          }
                          
@@ -2301,17 +2307,17 @@
                              </td>
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.filename}">${conversion.filename}</td>
                              <td><span class="badge ${statusClass}">${statusText}</span></td>
-                             <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (conversion.status === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : '—')}</td>
+                             <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.progress && conversion.progress.trim() ? conversion.progress : (actualStatus === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : (actualStatus === 'converting' ? 'Initializing…' : '—'))}">${conversion.progress && conversion.progress.trim() ? conversion.progress : (actualStatus === 'pending' ? ((conversion.schedule_type === 'immediate' || conversion.schedule_type === 'manual') ? 'Queued…' : 'Scheduled…') : (actualStatus === 'converting' ? 'Initializing…' : '—'))}</td>
                              <td>${conversion.schedule_type || 'immediate'}</td>
                              <td data-bs-toggle="tooltip" data-bs-placement="top" title="${conversion.output_filename || '-'}">${conversion.output_filename || '-'}</td>
                              <td>
                                  <div class="d-flex gap-1 justify-content-center">
-                                     ${conversion.status !== 'completed' && conversion.status !== 'failed' ? 
+                                     ${actualStatus !== 'completed' && actualStatus !== 'failed' ? 
                                          `<button class="btn btn-sm btn-outline-danger" onclick="cancelConversionJob(${conversion.job_id})" title="Cancel conversion">
                                              <i class="fas fa-times"></i>
                                          </button>` : ''
                                      }
-                                     ${conversion.status === 'completed' && conversion.output_filename ? 
+                                     ${actualStatus === 'completed' && conversion.output_filename ? 
                                          `<button class="btn btn-sm btn-outline-danger" onclick="deleteConvertedFile(${conversion.job_id})" title="Delete converted file">
                                              <i class="fas fa-file-video"></i>
                                          </button>` : ''
@@ -2333,7 +2339,10 @@
                      updateConversionProgressPagination(data.current_page, data.pages, data.total);
                      
                      // Set up polling for active jobs
-                     const hasActive = (data.conversions || []).some(j => j.status === 'pending' || j.status === 'converting');
+                     const hasActive = (data.conversions || []).some(j => {
+                         const actualStatus = (j.status === 'pending' && j.started_at) ? 'converting' : j.status;
+                         return actualStatus === 'pending' || actualStatus === 'converting';
+                     });
                      if (hasActive && !conversionPoll) {
                          conversionPoll = setInterval(() => refreshConversionProgress(conversionProgressPage), 5000);
                      } else if (!hasActive && conversionPoll) {
