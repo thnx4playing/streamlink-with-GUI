@@ -282,6 +282,8 @@ def _eligible_conversion_jobs(batch_size=3):
     return [job] if job else []
 
 def _update_job_progress(job, text):
+    # Re-attach to ensure we work with an attached instance
+    job = db.session.get(ConversionJob, job.id)
     job.progress = text
     try:
         db.session.commit()
@@ -290,6 +292,8 @@ def _update_job_progress(job, text):
 
 def _start_job(job: "ConversionJob"):
     """Mark job as started and commit quickly"""
+    # Re-attach to ensure we work with an attached instance
+    job = db.session.get(ConversionJob, job.id)
     job.status = 'converting'
     job.started_at = _utcnow()
     _update_job_progress(job, "Starting conversion...")
@@ -297,6 +301,8 @@ def _start_job(job: "ConversionJob"):
 
 def _finalize_job(job: "ConversionJob"):
     """Mark job as completed/failed and commit quickly"""
+    # Re-attach to ensure we work with an attached instance
+    job = db.session.get(ConversionJob, job.id)
     job.completed_at = _utcnow()
     db.session.commit()
 
@@ -305,6 +311,8 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
     # Resolve paths & validations (kept defensive)
     rec = Recording.query.get(job.recording_id) if job.recording_id else None
     if not rec:
+        # Re-attach to ensure we work with an attached instance
+        job = db.session.get(ConversionJob, job.id)
         job.status = 'failed'
         _update_job_progress(job, 'Recording not found')
         return
@@ -312,6 +320,8 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
     ts_path = os.path.join(get_download_path(), f"{rec.filename}.ts")
     part_path = os.path.join(get_download_path(), f"{rec.filename}.ts.part")
     if (not os.path.exists(ts_path)) or os.path.exists(part_path) or rec.status in ('deleted','failed','recording'):
+        # Re-attach to ensure we work with an attached instance
+        job = db.session.get(ConversionJob, job.id)
         job.status = 'failed'
         _update_job_progress(job, 'Source not eligible')
         return
@@ -343,15 +353,21 @@ def _run_ffmpeg_conversion(job: "ConversionJob"):
                     _update_job_progress(job, last_line[-120:])
         rc = proc.wait()
         if rc == 0 and os.path.exists(mp4_path):
+            # Re-attach to ensure we work with an attached instance
+            job = db.session.get(ConversionJob, job.id)
             job.status = 'completed'
             _update_job_progress(job, f"Done: {os.path.basename(mp4_path)}")
             if job.delete_original and os.path.exists(ts_path):
                 try: os.remove(ts_path)
                 except Exception: pass
         else:
+            # Re-attach to ensure we work with an attached instance
+            job = db.session.get(ConversionJob, job.id)
             job.status = 'failed'
             _update_job_progress(job, f"ffmpeg failed (rc={rc})")
     except Exception as e:
+        # Re-attach to ensure we work with an attached instance
+        job = db.session.get(ConversionJob, job.id)
         job.status = 'failed'
         _update_job_progress(job, f"Exception: {e}")
 
@@ -385,17 +401,23 @@ def conversion_worker_loop():
                     time.sleep(1)
                     continue
                 
-                # Flip to converting + started_at here
-                job.status = 'converting'
-                job.started_at = _utcnow()
-                db.session.commit()
-                
-                # Run the actual conversion (long-running)
-                _run_ffmpeg_conversion(job)
-                
-                # Mark job as completed/failed and commit quickly
-                job.completed_at = _utcnow()
-                db.session.commit()
+                try:
+                    # Re-fetch an attached instance to ensure we work with a fresh, attached object
+                    job = db.session.get(ConversionJob, job.id)
+                    _start_job(job)
+                    _run_ffmpeg_conversion(job)
+                    _finalize_job(job)
+                except Exception as e:
+                    app.logger.exception(f"Error processing job {job.id}: {e}")
+                    # Mark job as failed if we encounter an error
+                    try:
+                        job = db.session.get(ConversionJob, job.id)
+                        job.status = 'failed'
+                        job.completed_at = _utcnow()
+                        job.progress = f"Error: {str(e)}"
+                        db.session.commit()
+                    except Exception as commit_error:
+                        app.logger.exception(f"Failed to mark job {job.id} as failed: {commit_error}")
                 
             except Exception as e:
                 app.logger.exception("Conversion worker loop error")
