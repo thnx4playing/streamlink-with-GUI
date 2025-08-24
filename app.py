@@ -314,20 +314,32 @@ def _retry_locked(fn, *args, **kwargs):
                 continue
             raise
 
-def _eligible_conversion_jobs(batch_size=3):
+def _eligible_conversion_jobs(session, batch_size=1):
     """Return next chunk of conversion jobs that should run now."""
     now = _utcnow()
-    # Pick the oldest eligible pending job - simplified query
+    
+    # Count active converting jobs to respect concurrency limit
+    active_count = (
+        session.query(ConversionJob)
+        .filter(ConversionJob.status == 'converting')
+        .count()
+    )
+    
+    # If we're at capacity, don't pick up new jobs
+    if active_count >= batch_size:
+        return []
+    
+    # Pick the oldest eligible pending job
     job = (
-        ConversionJob.query
+        session.query(ConversionJob)
         .filter(ConversionJob.status == 'pending')
         .filter(
             db.or_(
-                # Manual/immediate jobs: run regardless of scheduled_at
-                ConversionJob.schedule_type.in_(['manual', 'immediate']),
+                # Immediate jobs: run regardless of scheduled_at
+                ConversionJob.schedule_type == 'immediate',
                 # Scheduled jobs: run when due
                 db.and_(
-                    ConversionJob.schedule_type.notin_(['manual', 'immediate']),
+                    ConversionJob.schedule_type == 'scheduled',
                     ConversionJob.scheduled_at.isnot(None),
                     ConversionJob.scheduled_at <= now,
                 ),
@@ -338,36 +350,45 @@ def _eligible_conversion_jobs(batch_size=3):
     )
     return [job] if job else []
 
-def _update_job_progress(job, text, session=None):
-    if session is None:
-        session = db.session
+def _update_job_progress(job, text, session, *, force=False):
+    """
+    Throttled to ~1/sec unless force=True. Keeps short 'progress' text in DB.
+    """
+    text = (text or "")[:255]
+    now = _utcnow()
+    if not force:
+        # optional: store a per-job "last_progress_at" in memory or on the job
+        last = getattr(job, "_last_progress_at", None)
+        if last and (now - last).total_seconds() < 1:
+            return
+        job._last_progress_at = now
+
     # Re-attach to ensure we work with an attached instance
     job = session.get(ConversionJob, job.id)
     job.progress = text
+    session.add(job)
     try:
         session.commit()
     except Exception:
         session.rollback()
 
-def _start_job(job: "ConversionJob", session=None):
+def _start_job(job: "ConversionJob", session):
     """Mark job as started and commit quickly"""
-    if session is None:
-        session = db.session
     # Re-attach to ensure we work with an attached instance
     job = session.get(ConversionJob, job.id)
     job.status = 'converting'
     job.started_at = _utcnow()
-    # Set a non-empty progress message so the UI doesn't treat this as "Queued"
-    job.progress = "Starting conversion…"
-    session.commit()  # single, early commit
+    _update_job_progress(job, "Starting conversion…", session, force=True)
 
-def _finalize_job(job: "ConversionJob", session=None):
+def _finalize_job(job: "ConversionJob", session, *, ok: bool, done_text: str = None):
     """Mark job as completed/failed and commit quickly"""
-    if session is None:
-        session = db.session
     # Re-attach to ensure we work with an attached instance
     job = session.get(ConversionJob, job.id)
     job.completed_at = _utcnow()
+    job.status = 'completed' if ok else 'failed'
+    if done_text:
+        _update_job_progress(job, done_text, session, force=True)
+    session.add(job)
     session.commit()
 
 def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
@@ -462,10 +483,6 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
         rc = proc.wait()
         conversion_logger.info(f"FFmpeg process completed with return code: {rc}")
         if rc == 0 and os.path.exists(mp4_path):
-            # Re-attach to ensure we work with an attached instance
-            job = session.get(ConversionJob, job.id)
-            job.status = 'completed'
-            _update_job_progress(job, f"Done: {os.path.basename(mp4_path)}", session)
             conversion_logger.info(f"Conversion completed successfully: {os.path.basename(mp4_path)}")
             if job.delete_original and os.path.exists(ts_path):
                 try: 
@@ -473,18 +490,14 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
                     conversion_logger.info(f"Deleted original file: {os.path.basename(ts_path)}")
                 except Exception as e:
                     conversion_logger.warning(f"Failed to delete original file {os.path.basename(ts_path)}: {e}")
+            # Let the worker loop handle finalization
+            return
         else:
-            # Re-attach to ensure we work with an attached instance
-            job = session.get(ConversionJob, job.id)
-            job.status = 'failed'
-            _update_job_progress(job, f"ffmpeg failed (rc={rc})", session)
             conversion_logger.error(f"FFmpeg conversion failed with return code {rc}")
+            raise Exception(f"ffmpeg failed (rc={rc})")
     except Exception as e:
-        # Re-attach to ensure we work with an attached instance
-        job = session.get(ConversionJob, job.id)
-        job.status = 'failed'
-        _update_job_progress(job, f"Exception: {e}", session)
         conversion_logger.error(f"Conversion exception: {e}")
+        raise
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
@@ -494,52 +507,31 @@ def conversion_worker_loop():
         try:
             while True:
                 try:
-                    # Pick the oldest eligible pending job
-                    job = (
-                        session.query(ConversionJob)
-                        .filter(ConversionJob.status == 'pending')
-                        .filter(
-                            db.or_(
-                                # Manual/immediate jobs: run regardless of scheduled_at
-                                ConversionJob.schedule_type.in_(['manual', 'immediate']),
-                                # Scheduled jobs: run when due
-                                db.and_(
-                                    ConversionJob.schedule_type.notin_(['manual', 'immediate']),
-                                    ConversionJob.scheduled_at.isnot(None),
-                                    ConversionJob.scheduled_at <= _utcnow(),
-                                ),
-                            )
-                        )
-                        .order_by(ConversionJob.id.asc())
-                        .first()
-                    )
+                    # Get eligible jobs using the proper filter
+                    jobs = _eligible_conversion_jobs(session)
                     
-                    if not job:
+                    if not jobs:
                         time.sleep(1)
                         continue
+                    
+                    job = jobs[0]  # Take the first eligible job
                     
                     try:
                         # Re-fetch an attached instance to ensure we work with a fresh, attached object
                         job = session.get(ConversionJob, job.id)
                         conversion_logger.info(f"Starting conversion job {job.id}")
                         _start_job(job, session)
-                        _run_ffmpeg_conversion(job, session)
-                        _finalize_job(job, session)
+                        try:
+                            _run_ffmpeg_conversion(job, session)
+                            _finalize_job(job, session, ok=True, done_text=f"Completed successfully")
+                        except Exception as e:
+                            _update_job_progress(job, f"Error: {e}", session, force=True)
+                            _finalize_job(job, session, ok=False)
+                            raise
                         conversion_logger.info(f"Completed conversion job {job.id}")
                     except Exception as e:
                         app.logger.exception(f"Error processing job {job.id}: {e}")
                         conversion_logger.error(f"Error processing job {job.id}: {e}")
-                        # Mark job as failed if we encounter an error
-                        try:
-                            job = session.get(ConversionJob, job.id)
-                            job.status = 'failed'
-                            job.completed_at = _utcnow()
-                            job.progress = f"Error: {str(e)}"
-                            session.commit()
-                            conversion_logger.error(f"Marked job {job.id} as failed due to error")
-                        except Exception as commit_error:
-                            app.logger.exception(f"Failed to mark job {job.id} as failed: {commit_error}")
-                            conversion_logger.error(f"Failed to mark job {job.id} as failed: {commit_error}")
                     
                 except Exception as e:
                     app.logger.exception("Conversion worker loop error")
@@ -1515,9 +1507,11 @@ def convert_recordings():
             scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
         except ValueError:
             return jsonify({'error': 'Invalid scheduled time format'}), 400
-    # For immediate jobs, make them due right away so the worker can pick them up
-    if schedule_type == 'immediate' and not scheduled_datetime:
-        scheduled_datetime = datetime.utcnow()
+    
+    # For immediate jobs, leave scheduled_at as None (don't set it)
+    # For scheduled jobs, ensure we have a scheduled time
+    if schedule_type == 'scheduled' and not scheduled_datetime:
+        return jsonify({'error': 'Scheduled time is required for scheduled conversions'}), 400
     
     # Debug logging
     logger.info(f"Conversion request - schedule_type: {schedule_type}, scheduled_time: {scheduled_time}, scheduled_datetime: {scheduled_datetime}")
