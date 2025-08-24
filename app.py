@@ -106,7 +106,6 @@ from sqlalchemy import text, event
 def _is_sqlite_uri(uri: str) -> bool:
     return uri.startswith("sqlite:")
 
-@event.listens_for(db.engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):
     uri = app.config.get("SQLALCHEMY_DATABASE_URI", "")
     if not _is_sqlite_uri(uri):
@@ -117,9 +116,16 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.execute("PRAGMA busy_timeout=60000;")
     cursor.close()
 
+def setup_sqlite_event_listeners():
+    """Setup SQLite event listeners within app context"""
+    event.listens_for(db.engine, "connect")(_set_sqlite_pragma)
+
 # Also set initial PRAGMAs for existing connections and initialize worker session
 with app.app_context():
     try:
+        # Setup SQLite event listeners
+        setup_sqlite_event_listeners()
+        
         db.session.execute(text("PRAGMA journal_mode=WAL;"))
         db.session.execute(text("PRAGMA synchronous=NORMAL;"))
         db.session.execute(text("PRAGMA busy_timeout=60000;"))
