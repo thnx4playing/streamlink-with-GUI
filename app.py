@@ -377,15 +377,35 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
         _update_job_progress(job, 'Source not eligible', session)
         return
     out_dir = get_converted_path()
-    base_name = job.custom_filename.strip() if job.custom_filename else rec.filename
-    mp4_path = os.path.join(out_dir, f"{base_name}.mp4")
     
-    # Get conversion settings for preset
+    # Get conversion settings for naming template
     settings = ConversionSettings.query.first()
     if not settings:
         settings = ConversionSettings()
         db.session.add(settings)
         db.session.commit()
+    
+    # Build filename using conversion settings template or fallback to job custom filename
+    if settings.custom_filename_template and settings.custom_filename_template.strip():
+        # Use the global conversion settings template
+        base_name = build_custom_filename(settings.custom_filename_template, rec)
+        conversion_logger.info(f"Using conversion settings template: {settings.custom_filename_template}")
+    elif job.custom_filename and job.custom_filename.strip():
+        # Use job-specific custom filename
+        base_name = job.custom_filename.strip()
+        conversion_logger.info(f"Using job-specific custom filename: {base_name}")
+    else:
+        # Fallback to original filename
+        base_name = rec.filename
+        conversion_logger.info(f"Using original filename: {base_name}")
+    
+    # Ensure it ends with .mp4
+    if not base_name.endswith('.mp4'):
+        base_name += '.mp4'
+    
+    mp4_path = os.path.join(out_dir, base_name)
+    
+    # Get conversion settings for preset (reuse settings from above)
     
     # Log the settings being used
     conversion_logger.info(f"Using conversion settings - ffmpeg_preset: {getattr(settings, 'ffmpeg_preset', 'NOT_SET')}")
@@ -1836,8 +1856,10 @@ def build_custom_filename(template, recording):
     streamer_name = streamer.username if streamer else 'unknown'
     twitch_name = streamer.twitch_name if streamer else 'unknown'
     
-    # Clean title for filename
+    # Clean title for filename (remove invalid characters)
     safe_title = "".join(c for c in (recording.title or 'untitled') if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    # Replace spaces with underscores for better filename compatibility
+    safe_title = safe_title.replace(' ', '_')
     
     # Get date and time from recording start time
     date_str = recording.started_at.strftime('%Y-%m-%d')
@@ -1853,6 +1875,10 @@ def build_custom_filename(template, recording):
     filename = filename.replace('{time}', time_str)
     filename = filename.replace('{datetime}', datetime_str)
     filename = filename.replace('{game}', recording.game or 'unknown')
+    
+    # Clean up any remaining invalid characters
+    filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.', '/', '\\'))
+    filename = filename.strip()
     
     # Ensure it ends with .mp4
     if not filename.endswith('.mp4'):
