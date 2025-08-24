@@ -503,45 +503,42 @@ def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
     with app.app_context():
         logger.info("Conversion worker: started (app context bound)")
-        session = WorkerSession()
-        try:
-            while True:
-                try:
-                    # Get eligible jobs using the proper filter
-                    jobs = _eligible_conversion_jobs(session)
-                    
-                    if not jobs:
-                        time.sleep(1)
-                        continue
-                    
-                    job = jobs[0]  # Take the first eligible job
-                    
-                    try:
-                        # Re-fetch an attached instance to ensure we work with a fresh, attached object
-                        job = session.get(ConversionJob, job.id)
-                        conversion_logger.info(f"Starting conversion job {job.id}")
-                        _start_job(job, session)
-                        try:
-                            _run_ffmpeg_conversion(job, session)
-                            _finalize_job(job, session, ok=True, done_text=f"Completed successfully")
-                        except Exception as e:
-                            _update_job_progress(job, f"Error: {e}", session, force=True)
-                            _finalize_job(job, session, ok=False)
-                            raise
-                        conversion_logger.info(f"Completed conversion job {job.id}")
-                    except Exception as e:
-                        app.logger.exception(f"Error processing job {job.id}: {e}")
-                        conversion_logger.error(f"Error processing job {job.id}: {e}")
-                    
-                except Exception as e:
-                    app.logger.exception("Conversion worker loop error")
+        while True:
+            session = WorkerSession()  # Create fresh session for each iteration
+            try:
+                # Get eligible jobs using the proper filter
+                jobs = _eligible_conversion_jobs(session)
+                
+                if not jobs:
                     time.sleep(1)
-                finally:
-                    # Ensure each iteration has a clean session (thread-safe)
-                    session.remove()
-        finally:
-            session.close()
-            WorkerSession.remove()
+                    continue
+                
+                job = jobs[0]  # Take the first eligible job
+                
+                try:
+                    # Re-fetch an attached instance to ensure we work with a fresh, attached object
+                    job = session.get(ConversionJob, job.id)
+                    conversion_logger.info(f"Starting conversion job {job.id}")
+                    _start_job(job, session)
+                    try:
+                        _run_ffmpeg_conversion(job, session)
+                        _finalize_job(job, session, ok=True, done_text=f"Completed successfully")
+                    except Exception as e:
+                        _update_job_progress(job, f"Error: {e}", session, force=True)
+                        _finalize_job(job, session, ok=False)
+                        raise
+                    conversion_logger.info(f"Completed conversion job {job.id}")
+                except Exception as e:
+                    app.logger.exception(f"Error processing job {job.id}: {e}")
+                    conversion_logger.error(f"Error processing job {job.id}: {e}")
+                
+            except Exception as e:
+                app.logger.exception("Conversion worker loop error")
+                time.sleep(1)
+            finally:
+                # Clean up session for this iteration
+                session.close()
+                WorkerSession.remove()
 
 def get_recording_status(recording):
     """Determine the actual status of a recording based on file existence and extension"""
@@ -1517,8 +1514,10 @@ def convert_recordings():
     logger.info(f"Conversion request - schedule_type: {schedule_type}, scheduled_time: {scheduled_time}, scheduled_datetime: {scheduled_datetime}")
     
     for recording_id in recording_ids:
-        # Check if conversion job already exists
-        existing_job = ConversionJob.query.filter_by(recording_id=recording_id).first()
+        # Check if there's an active conversion job (pending or converting)
+        existing_job = ConversionJob.query.filter_by(recording_id=recording_id).filter(
+            ConversionJob.status.in_(['pending', 'converting'])
+        ).first()
         if not existing_job:
             job = ConversionJob(
                 recording_id=recording_id,
