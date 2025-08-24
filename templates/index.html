@@ -2715,8 +2715,17 @@
             }
         }
 
+        // Track deleted files to prevent re-clicking
+        const deletedFiles = new Set();
+
         // Delete converted file
         async function deleteConvertedFile(jobId) {
+            // Check if already deleted
+            if (deletedFiles.has(jobId)) {
+                alert('File has already been deleted');
+                return;
+            }
+
             if (confirm('Are you sure you want to delete the converted file? This action cannot be undone.')) {
                 try {
                     const response = await fetch(`/api/conversion-jobs/${jobId}/delete-file`, {
@@ -2724,6 +2733,20 @@
                     });
                     
                     if (response.ok) {
+                        // Mark as deleted
+                        deletedFiles.add(jobId);
+                        
+                        // Update the button to show it's deleted
+                        const deleteBtn = document.querySelector(`button[onclick="deleteConvertedFile(${jobId})"]`);
+                        if (deleteBtn) {
+                            deleteBtn.className = 'btn btn-sm btn-secondary';
+                            deleteBtn.disabled = true;
+                            deleteBtn.innerHTML = '<i class="fas fa-check"></i>';
+                            deleteBtn.title = 'File deleted';
+                            deleteBtn.onclick = null; // Remove onclick to prevent re-clicking
+                        }
+                        
+                        // Also refresh the data to ensure consistency
                         refreshConversionProgress();
                         loadScheduledTasks();
                     } else {

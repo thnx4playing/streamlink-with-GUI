@@ -1692,7 +1692,8 @@ def get_conversion_progress():
         
         logger.info(f"Fetching conversion progress: page={page}, per_page={per_page}")
         
-        jobs = ConversionJob.query.order_by(ConversionJob.id.desc()).paginate(
+        # Filter out template jobs (jobs with recording_id = NULL) and only show real conversion jobs
+        jobs = ConversionJob.query.filter(ConversionJob.recording_id.isnot(None)).order_by(ConversionJob.id.desc()).paginate(
             page=page, per_page=per_page, error_out=False
         )
         
@@ -1768,9 +1769,15 @@ def delete_converted_file(job_id):
     try:
         if os.path.exists(output_file):
             os.remove(output_file)
+            # Clear the output_filename since the file no longer exists
+            job.output_filename = None
+            db.session.commit()
             logger.info(f"Deleted converted file: {output_file}")
             return jsonify({'message': 'Converted file deleted successfully'})
         else:
+            # File doesn't exist, but clear the output_filename anyway
+            job.output_filename = None
+            db.session.commit()
             return jsonify({'error': 'Converted file not found'}), 404
     except Exception as e:
         logger.error(f"Error deleting converted file {output_file}: {e}")
