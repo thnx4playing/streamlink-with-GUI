@@ -3,7 +3,7 @@
 Streamlink Web GUI - A web interface for managing Twitch stream recordings
 """
 import os, sys, time, json, threading, subprocess, signal, uuid, logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -289,7 +289,8 @@ def get_converted_volume_path():
     return os.getenv('CONVERTED_VOLUME_PATH', get_converted_path())
 
 def _utcnow():
-    return datetime.utcnow()
+    """Get current UTC time (naive)"""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 def _build_ffmpeg_cmd(input_path, output_path, settings: ConversionSettings):
     """Build FFmpeg command using the selected preset"""
@@ -518,13 +519,13 @@ def template_scheduler_loop():
         while True:
             try:
                 now = _utcnow()
-                logger.info(f"Template scheduler: checking for due templates at {now}")
+                logger.debug(f"Template scheduler: checking for due templates at {now}")
                 
                 # Templates due to run now
                 due = (db.session.query(ConversionJob)
                        .filter(ConversionJob.recording_id.is_(None))
                        .filter(ConversionJob.status.in_(['pending', 'scheduled']))
-                       .filter(ConversionJob.schedule_type.in_(['scheduled','daily','weekly']))
+                       .filter(ConversionJob.schedule_type.in_(['scheduled','daily','weekly','custom']))
                        .filter(ConversionJob.scheduled_at.isnot(None))
                        .filter(ConversionJob.scheduled_at <= now)
                        .order_by(ConversionJob.id.asc())
@@ -580,12 +581,28 @@ def template_scheduler_loop():
                     if created == 0:
                         logger.info(f"Template {tpl.id}: no jobs created - all recordings may already have active conversion jobs")
 
-                # Sleep after processing (whether there were due templates or not)
-                time.sleep(30)  # Check every 30 seconds
+                # Compute next due time for adaptive sleep
+                next_due = (db.session.query(ConversionJob.scheduled_at)
+                           .filter(ConversionJob.recording_id.is_(None))
+                           .filter(ConversionJob.status.in_(['pending', 'scheduled']))
+                           .filter(ConversionJob.schedule_type.in_(['scheduled','daily','weekly','custom']))
+                           .filter(ConversionJob.scheduled_at.isnot(None))
+                           .order_by(ConversionJob.scheduled_at.asc())
+                           .first())
+
+                sleep_for = 30  # upper bound
+                if next_due and next_due[0]:
+                    now = _utcnow()
+                    delta = (next_due[0] - now).total_seconds()
+                    # If next run is sooner than 30s, wake up earlier; never spin faster than 1s
+                    sleep_for = max(1, min(30, delta if delta > 0 else 1))
+
+                logger.info(f"Template scheduler: sleeping {sleep_for:.0f}s")
+                time.sleep(sleep_for)
 
             except Exception as e:
                 logger.exception(f"Template scheduler error: {e}")
-                time.sleep(30)  # Wait 30 seconds on error too
+                time.sleep(5)  # Wait 5 seconds on error
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
@@ -1612,6 +1629,9 @@ def convert_recordings():
     if scheduled_time:
         try:
             scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+            # Normalize to naive UTC for consistent storage
+            if scheduled_datetime.tzinfo is not None:
+                scheduled_datetime = scheduled_datetime.astimezone(timezone.utc).replace(tzinfo=None)
         except ValueError:
             return jsonify({'error': 'Invalid scheduled time format'}), 400
     
@@ -1851,6 +1871,9 @@ def create_schedule_template():
         if scheduled_time:
             try:
                 scheduled_datetime = datetime.fromisoformat(scheduled_time.replace('Z', '+00:00'))
+                # Normalize to naive UTC for consistent storage
+                if scheduled_datetime.tzinfo is not None:
+                    scheduled_datetime = scheduled_datetime.astimezone(timezone.utc).replace(tzinfo=None)
                 logger.info(f"Parsed scheduled time: {scheduled_datetime}")
             except ValueError as e:
                 logger.error(f"Invalid scheduled time format: {scheduled_time}, error: {e}")
