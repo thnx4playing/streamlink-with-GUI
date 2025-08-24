@@ -2045,12 +2045,16 @@
                 
                 const tasksList = document.getElementById('scheduled-tasks-list');
                 
-                // Show all jobs, not just pending ones
-                const allJobs = data.conversions || [];
+                // Filter to show only actual scheduled tasks (not immediate conversions)
+                const scheduledJobs = (data.conversions || []).filter(job => 
+                    job.schedule_type && 
+                    job.schedule_type !== 'immediate' && 
+                    job.schedule_type !== 'manual'
+                );
                 
-                if (allJobs.length > 0) {
+                if (scheduledJobs.length > 0) {
                     tasksList.innerHTML = '';
-                    allJobs.forEach(job => {
+                    scheduledJobs.forEach(job => {
                         const row = document.createElement('tr');
                         
                         // Determine status badge color
@@ -2103,7 +2107,7 @@
                     // Reinitialize tooltips for the new table rows
                     initializeTooltips();
                 } else {
-                    tasksList.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No scheduled tasks</td></tr>';
+                    tasksList.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No scheduled conversion tasks</td></tr>';
                 }
             } catch (error) {
                 console.error('Error loading scheduled tasks:', error);
