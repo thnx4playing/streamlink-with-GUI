@@ -535,7 +535,7 @@ def template_scheduler_loop():
                     logger.info(f"Template {tpl.id}: type={tpl.schedule_type}, scheduled_at={tpl.scheduled_at}, status={tpl.status}")
 
                 if not due:
-                    time.sleep(1)
+                    time.sleep(30)  # Check every 30 seconds instead of every second
                     continue
 
                 for tpl in due:
@@ -586,7 +586,7 @@ def template_scheduler_loop():
 
             except Exception as e:
                 logger.exception(f"Template scheduler error: {e}")
-                time.sleep(1)
+                time.sleep(30)  # Wait 30 seconds on error too
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
