@@ -2573,20 +2573,24 @@
                             <td>
                                 <input type="checkbox" class="recording-checkbox" value="${recording.id}" onchange="updateConvertButton()">
                             </td>
-                            <td>${recording.streamer_name || recording.streamer_id}</td>
-                            <td>${recording.title || 'No title'}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${recording.streamer_name || recording.streamer_id}">${recording.streamer_name || recording.streamer_id}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${recording.title || 'No title'}">${recording.title || 'No title'}</td>
                             <td>
                                 <span class="badge ${statusClass}">${status}</span>
                             </td>
-                            <td>${formatDateEastern(recording.started_at)}</td>
-                            <td>${duration}</td>
-                            <td>${fileSize}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${formatDateEastern(recording.started_at)}">${formatDateEastern(recording.started_at)}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${duration}">${duration}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${fileSize}">${fileSize}</td>
                             <td>
                                 <span class="badge bg-secondary" id="conversion-status-${recording.id}">Not Converted</span>
                             </td>
                         `;
                         tbody.appendChild(row);
                     });
+                    
+                    // Initialize tooltips for the new table rows
+                    initializeTooltips();
+                    
                     console.log('Finished processing recordings');
                 } else {
                     console.log('No recordings found, showing empty message');
