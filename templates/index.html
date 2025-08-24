@@ -1041,6 +1041,13 @@
                             <div class="card-body">
                                 <form id="conversion-settings-form">
                                     <div class="mb-3">
+                                        <label for="ffmpegPreset" class="form-label fw-bold">FFmpeg Preset</label>
+                                        <select class="form-select" id="ffmpegPreset">
+                                            <!-- Options will be populated by JavaScript -->
+                                        </select>
+                                        <small id="ffmpegPresetHelp" class="form-text text-muted"></small>
+                                    </div>
+                                    <div class="mb-3">
                                         <label class="form-label fw-bold">Input Directory</label>
                                         <div class="form-control-plaintext" id="conversion-volume-path-display">Loading...</div>
                                         <small class="form-text text-muted">Directory containing TS files to convert</small>
@@ -1054,13 +1061,6 @@
                                         <label for="custom-filename-template" class="form-label fw-bold">File Naming Scheme</label>
                                         <input type="text" class="form-control" id="custom-filename-template" placeholder="{streamer}_{date}_{title}">
                                         <small class="form-text text-muted">Use variables: {streamer}, {twitch_name}, {title}, {date}, {time}, {datetime}, {game}</small>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label for="ffmpegPreset" class="form-label fw-bold">FFmpeg Preset</label>
-                                        <select class="form-select" id="ffmpegPreset">
-                                            <!-- Options will be populated by JavaScript -->
-                                        </select>
-                                        <small id="ffmpegPresetHelp" class="form-text text-muted"></small>
                                     </div>
                                     <div class="mb-3">
                                         <div class="form-check">
