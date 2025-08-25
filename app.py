@@ -271,6 +271,10 @@ active_by_streamer = {}   # {streamer_id: recording_id}
 conversion_worker_thread = None
 conversion_wakeup = threading.Event()
 
+# Add monitoring thread tracking
+monitoring_threads = {}  # {streamer_id: threading.Thread}
+monitoring_stop_flags = {}  # {streamer_id: threading.Event()}
+
 def get_download_path():
     """Get the download path from environment or use default"""
     return os.getenv('DOWNLOAD_PATH', './download')
@@ -898,6 +902,84 @@ def start_recording_for_streamer(streamer: Streamer):
     recording_threads[recording.id] = th
     return recording.id
 
+def start_monitoring_for_streamer(streamer_id: int):
+    """Start background monitoring for a specific streamer"""
+    # Check if already monitoring
+    if streamer_id in monitoring_threads:
+        existing_thread = monitoring_threads[streamer_id]
+        if existing_thread.is_alive():
+            logger.info(f"Already monitoring streamer {streamer_id}")
+            return
+        else:
+            # Clean up dead thread
+            monitoring_threads.pop(streamer_id, None)
+            monitoring_stop_flags.pop(streamer_id, None)
+    
+    # Create stop flag for this streamer
+    stop_flag = threading.Event()
+    monitoring_stop_flags[streamer_id] = stop_flag
+    
+    def _monitor_streamer():
+        """Background monitoring function for a specific streamer"""
+        with app.app_context():
+            while not stop_flag.is_set():
+                try:
+                    # Get fresh streamer data
+                    streamer = Streamer.query.get(streamer_id)
+                    if not streamer or not streamer.is_active:
+                        logger.info(f"Streamer {streamer_id} is no longer active, stopping monitoring")
+                        break
+                    
+                    # Check if already recording
+                    if streamer_id in active_by_streamer:
+                        # Already recording, just wait
+                        time.sleep(streamer.timer)
+                        continue
+                    
+                    # Check stream status
+                    config = AppConfig(streamer)
+                    twitch_manager = TwitchManager(config)
+                    
+                    try:
+                        status, title = twitch_manager.check_user(streamer.twitch_name)
+                        
+                        if status == StreamStatus.ONLINE:
+                            logger.info(f"Streamer {streamer.username} is online, starting recording")
+                            start_recording_for_streamer(streamer)
+                        elif status == StreamStatus.ERROR:
+                            logger.error(f"Error checking status for streamer {streamer.username}")
+                        # For OFFLINE and UNDESIRED_GAME, just continue monitoring
+                        
+                    except Exception as e:
+                        logger.error(f"Error in monitoring loop for streamer {streamer.username}: {e}")
+                    
+                    # Wait before next check
+                    time.sleep(streamer.timer)
+                    
+                except Exception as e:
+                    logger.error(f"Unexpected error in monitoring thread for streamer {streamer_id}: {e}")
+                    time.sleep(30)  # Wait a bit longer on error
+    
+    # Start monitoring thread
+    monitor_thread = threading.Thread(
+        target=_monitor_streamer, 
+        name=f"monitor-{streamer_id}", 
+        daemon=True
+    )
+    monitor_thread.start()
+    monitoring_threads[streamer_id] = monitor_thread
+    logger.info(f"Started monitoring for streamer {streamer_id}")
+
+def stop_monitoring_for_streamer(streamer_id: int):
+    """Stop background monitoring for a specific streamer"""
+    if streamer_id in monitoring_stop_flags:
+        monitoring_stop_flags[streamer_id].set()
+        monitoring_stop_flags.pop(streamer_id, None)
+    
+    if streamer_id in monitoring_threads:
+        monitoring_threads.pop(streamer_id, None)
+        logger.info(f"Stopped monitoring for streamer {streamer_id}")
+
 def record_stream(streamer_id):
     """Background function to record a stream"""
     with app.app_context():
@@ -1219,14 +1301,11 @@ def update_streamer(streamer_id):
     streamer.updated_at = datetime.utcnow()
     db.session.commit()
     
-    # Handle recording thread
-    if streamer.is_active and streamer_id not in recording_threads:
-        thread = threading.Thread(target=record_stream, args=(streamer_id,), daemon=True)
-        thread.start()
-        recording_threads[streamer_id] = thread
-    elif not streamer.is_active and streamer_id in recording_threads:
-        # Note: We can't easily stop the thread, but it will stop on next iteration
-        del recording_threads[streamer_id]
+    # Handle monitoring thread
+    if streamer.is_active:
+        start_monitoring_for_streamer(streamer_id)
+    else:
+        stop_monitoring_for_streamer(streamer_id)
     
     return jsonify({'message': 'Streamer updated successfully'})
 
@@ -1235,9 +1314,8 @@ def delete_streamer(streamer_id):
     """API endpoint to delete a streamer"""
     streamer = Streamer.query.get_or_404(streamer_id)
     
-    # Stop recording thread
-    if streamer_id in recording_threads:
-        del recording_threads[streamer_id]
+    # Stop monitoring thread
+    stop_monitoring_for_streamer(streamer_id)
     
     db.session.delete(streamer)
     db.session.commit()
@@ -1386,6 +1464,39 @@ def check_streamer_status(streamer_id):
             'status': 'ERROR',
             'title': str(e)
         }), 500
+
+@app.route('/api/streamers/<int:streamer_id>/start-monitoring', methods=['POST'])
+def start_streamer_monitoring(streamer_id):
+    """API endpoint to manually start monitoring for a streamer"""
+    streamer = Streamer.query.get_or_404(streamer_id)
+    
+    if not streamer.is_active:
+        return jsonify({'error': 'Streamer is not active'}), 400
+    
+    try:
+        start_monitoring_for_streamer(streamer_id)
+        return jsonify({
+            'message': f'Started monitoring for streamer {streamer.username}',
+            'streamer_id': streamer_id
+        })
+    except Exception as e:
+        logger.error(f"Error starting monitoring for streamer {streamer_id}: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/streamers/<int:streamer_id>/stop-monitoring', methods=['POST'])
+def stop_streamer_monitoring(streamer_id):
+    """API endpoint to manually stop monitoring for a streamer"""
+    streamer = Streamer.query.get_or_404(streamer_id)
+    
+    try:
+        stop_monitoring_for_streamer(streamer_id)
+        return jsonify({
+            'message': f'Stopped monitoring for streamer {streamer.username}',
+            'streamer_id': streamer_id
+        })
+    except Exception as e:
+        logger.error(f"Error stopping monitoring for streamer {streamer_id}: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/active-recordings')
 def get_active_recordings():
@@ -2215,15 +2326,15 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Error reconciling stale recordings: {e}")
 
-    # Start recording threads for existing active streamers
+    # Start monitoring threads for existing active streamers
     try:
         with app.app_context():
             active_streamers = Streamer.query.filter_by(is_active=True).all()
             for streamer in active_streamers:
-                # we'll only start on demand via UI / scheduler to avoid duplicates
-                logger.info(f"Streamer {streamer.id} is active; waiting for explicit start to avoid duplicates.")
+                logger.info(f"Starting monitoring for active streamer {streamer.id} ({streamer.username})")
+                start_monitoring_for_streamer(streamer.id)
     except Exception as e:
-        logger.error(f"Error starting recording threads: {e}")
+        logger.error(f"Error starting monitoring threads: {e}")
     
     # Start conversion worker once
     if not conversion_worker_thread or not conversion_worker_thread.is_alive():
