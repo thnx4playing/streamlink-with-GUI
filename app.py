@@ -271,6 +271,9 @@ active_by_streamer = {}   # {streamer_id: recording_id}
 conversion_worker_thread = None
 conversion_wakeup = threading.Event()
 
+# Track conversion processes for hard-stop fallback
+conversion_processes = {}  # {job_id: {"proc": Popen, "pid": int}}
+
 def get_download_path():
     """Get the download path from environment or use default"""
     return os.getenv('DOWNLOAD_PATH', './download')
@@ -466,6 +469,9 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         conversion_logger.info(f"FFmpeg process started with PID: {proc.pid}")
         
+        # Store process handle for potential hard-stop
+        conversion_processes[job.id] = {"proc": proc, "pid": proc.pid}
+        
         # Throttle progress updates to reduce database writes
         last_commit = 0
         last_progress = ""
@@ -511,6 +517,9 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
     except Exception as e:
         conversion_logger.error(f"Conversion exception: {e}")
         raise
+    finally:
+        # Clean up process tracking
+        conversion_processes.pop(job.id, None)
 
 def template_scheduler_loop():
     """Expand due schedule templates (recording_id is NULL) into real conversion jobs."""
@@ -1798,6 +1807,22 @@ def cancel_conversion_job(job_id):
     
     if job.status in ['completed', 'failed']:
         return jsonify({'error': 'Cannot cancel completed or failed jobs'}), 400
+    
+    # Hard-stop fallback: terminate FFmpeg process if still running
+    proc_info = conversion_processes.get(job_id)
+    if proc_info and proc_info.get("proc"):
+        proc = proc_info["proc"]
+        if proc.poll() is None:  # Process is still running
+            logger.warning(f"Conversion job {job_id} is still running, terminating FFmpeg process {proc.pid}")
+            try:
+                proc.terminate()
+                # Give terminate a moment to work
+                time.sleep(2)
+                if proc.poll() is None:  # Still running, force kill
+                    logger.warning(f"FFmpeg process {proc.pid} didn't terminate, killing it")
+                    proc.kill()
+            except Exception as e:
+                logger.error(f"Error terminating FFmpeg process {proc.pid}: {e}")
     
     db.session.delete(job)
     db.session.commit()
