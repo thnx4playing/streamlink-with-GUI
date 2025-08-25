@@ -1079,6 +1079,40 @@
                              </div>
                          </div>
 
+                         <!-- Scheduled Tasks Display Section (Read-Only) -->
+                         <div class="card mt-4">
+                             <div class="card-header d-flex justify-content-between align-items-center">
+                                 <h5 class="mb-0">
+                                     <i class="fas fa-clock me-2"></i>Scheduled Tasks
+                                 </h5>
+                                 <button class="btn btn-sm btn-outline-primary" onclick="loadScheduledTasksReadOnly()">
+                                     <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                                 </button>
+                             </div>
+                             <div class="card-body">
+                                 <div class="table-responsive">
+                                     <table class="table table-hover">
+                                         <thead>
+                                             <tr>
+                                                 <th>Task Name</th>
+                                                 <th>Schedule Type</th>
+                                                 <th>Scheduled Time</th>
+                                                 <th>Last Run</th>
+                                                 <th>Status</th>
+                                                 <th>Progress</th>
+                                                 <th>Actions</th>
+                                             </tr>
+                                         </thead>
+                                         <tbody id="scheduled-tasks-readonly-list">
+                                             <tr>
+                                                 <td colspan="7" class="text-center text-muted">No scheduled tasks</td>
+                                             </tr>
+                                         </tbody>
+                                     </table>
+                                 </div>
+                             </div>
+                         </div>
+
 
                     </div>
 
@@ -1163,6 +1197,40 @@
                                 <button type="button" class="btn btn-primary" onclick="saveConversionOptions()">
                                     <i class="fas fa-save me-1"></i>Save Options
                                 </button>
+                            </div>
+                        </div>
+
+                        <!-- Scheduled Tasks Display Section -->
+                        <div class="card mt-4">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>Active Scheduled Tasks
+                                </h5>
+                                <button class="btn btn-sm btn-outline-primary" onclick="loadScheduledTasks()">
+                                    <i class="fas fa-sync-alt refresh-btn"></i> Refresh
+                                </button>
+                            </div>
+                            <div class="card-body">
+                                <div class="table-responsive">
+                                    <table class="table table-hover">
+                                        <thead>
+                                            <tr>
+                                                <th>Task Name</th>
+                                                <th>Schedule Type</th>
+                                                <th>Scheduled Time</th>
+                                                <th>Last Run</th>
+                                                <th>Status</th>
+                                                <th>Progress</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="scheduled-tasks-list">
+                                            <tr>
+                                                <td colspan="7" class="text-center text-muted">No scheduled tasks</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1318,6 +1386,14 @@
              
              // Initialize Bootstrap tooltips
              initializeTooltips();
+             
+             // Add event listener for conversion sub-tab changes
+             const conversionStatusTab = document.getElementById('conversion-status-tab');
+             if (conversionStatusTab) {
+                 conversionStatusTab.addEventListener('shown.bs.tab', function() {
+                     loadScheduledTasksReadOnly();
+                 });
+             }
              
              // Auto-refresh every 30 seconds
              setInterval(function() {
@@ -2752,6 +2828,64 @@
                     console.error('Error removing recording from history:', error);
                     alert('Error removing recording from history');
                 }
+            }
+        }
+
+        // Load scheduled tasks (read-only version for Conversion Status tab)
+        async function loadScheduledTasksReadOnly() {
+            try {
+                console.log('Loading scheduled tasks (read-only)...');
+                const response = await fetch('/api/schedule-template');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Scheduled tasks data (read-only):', data);
+                
+                const tasksList = document.getElementById('scheduled-tasks-readonly-list');
+                
+                const templates = data.templates || [];
+                
+                if (templates.length > 0) {
+                    tasksList.innerHTML = '';
+                    templates.forEach(template => {
+                        const row = document.createElement('tr');
+                        
+                        // Format schedule type for display
+                        let scheduleTypeDisplay = template.schedule_type;
+                        if (template.schedule_type === 'daily') scheduleTypeDisplay = 'Daily';
+                        else if (template.schedule_type === 'weekly') scheduleTypeDisplay = 'Weekly';
+                        else if (template.schedule_type === 'custom') scheduleTypeDisplay = 'One-time';
+                        else if (template.schedule_type === 'scheduled') scheduleTypeDisplay = 'Scheduled';
+                        
+                        const nextRunDate = template.next_run ? formatDateEasternCompact(template.next_run) : 'Not set';
+                        const customFilename = template.custom_filename || 'Default naming';
+                        
+                        row.innerHTML = `
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${customFilename}">${customFilename}</td>
+                            <td>${scheduleTypeDisplay}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="${template.next_run ? formatDateEastern(template.next_run) : 'No schedule'}">${nextRunDate}</td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="Active">Active</td>
+                            <td><span class="badge bg-success">Active</span></td>
+                            <td data-bs-toggle="tooltip" data-bs-placement="top" title="Schedule template">Schedule template</td>
+                            <td>
+                                <span class="text-muted">View Only</span>
+                            </td>
+                        `;
+                        tasksList.appendChild(row);
+                    });
+                    
+                    // Reinitialize tooltips for the new table rows
+                    initializeTooltips();
+                } else {
+                    tasksList.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No active schedule templates</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading scheduled tasks (read-only):', error);
+                const tasksList = document.getElementById('scheduled-tasks-readonly-list');
+                tasksList.innerHTML = `<tr><td colspan="7" class="text-center text-danger">Error loading scheduled tasks: ${error.message}</td></tr>`;
             }
         }
 
