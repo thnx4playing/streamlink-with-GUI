@@ -80,17 +80,45 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # SQLite engine options for thread safety and busy timeout
 app.config.setdefault("SQLALCHEMY_ENGINE_OPTIONS", {
     "pool_pre_ping": True,
-    "pool_size": 5,
-    "max_overflow": 5,
+    "pool_size": 20,                  # Increased from 5 to handle more concurrent requests
+    "max_overflow": 30,               # Increased from 5 to allow more overflow connections
+    "pool_timeout": 60,               # Increased timeout for getting connections from pool
+    "pool_recycle": 3600,             # Recycle connections after 1 hour
     "connect_args": {
         "check_same_thread": False,   # required since we use threads
-        "timeout": 30,                # sqlite busy timeout in seconds
+        "timeout": 60,                # increased sqlite busy timeout in seconds
     }
 })
 
 # Initialize extensions
 db = SQLAlchemy(app)
 CORS(app)
+
+def cleanup_session(f):
+    """Decorator to ensure proper session cleanup after API calls"""
+    def wrapper(*args, **kwargs):
+        try:
+            return f(*args, **kwargs)
+        except Exception as e:
+            # Log the error but don't re-raise to avoid double logging
+            app.logger.error(f"Error in {f.__name__}: {e}")
+            raise
+        finally:
+            # Always cleanup the session
+            try:
+                db.session.remove()
+            except Exception as cleanup_error:
+                app.logger.warning(f"Session cleanup error in {f.__name__}: {cleanup_error}")
+    wrapper.__name__ = f.__name__
+    return wrapper
+
+def log_connection_pool_status():
+    """Log current connection pool status for debugging"""
+    try:
+        pool = db.engine.pool
+        app.logger.info(f"Connection pool status: size={pool.size()}, checked_in={pool.checkedin()}, checked_out={pool.checkedout()}, overflow={pool.overflow()}")
+    except Exception as e:
+        app.logger.warning(f"Could not log connection pool status: {e}")
 
 # Create scoped session for worker threads (will be initialized later)
 WorkerSession = None
@@ -541,6 +569,15 @@ def template_scheduler_loop():
                        .all())
                 
                 logger.info(f"Template scheduler: found {len(due)} due templates")
+                
+                # Log connection pool status every 10 minutes (every 20th iteration at 30s intervals)
+                if hasattr(template_scheduler_loop, '_iteration_count'):
+                    template_scheduler_loop._iteration_count += 1
+                else:
+                    template_scheduler_loop._iteration_count = 1
+                
+                if template_scheduler_loop._iteration_count % 20 == 0:  # Every 10 minutes
+                    log_connection_pool_status()
                 for tpl in due:
                     logger.info(f"Template {tpl.id}: type={tpl.schedule_type}, scheduled_at={tpl.scheduled_at}, status={tpl.status}")
 
@@ -1154,6 +1191,7 @@ def test_favicon():
     })
 
 @app.route('/api/streamers', methods=['GET'])
+@cleanup_session
 def get_streamers():
     """API endpoint to get all streamers"""
     logger.info("GET /api/streamers called")
@@ -1183,6 +1221,7 @@ def get_streamers():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/streamers', methods=['POST'])
+@cleanup_session
 def add_streamer():
     """API endpoint to add a new streamer"""
     data = request.get_json()
@@ -1218,6 +1257,7 @@ def add_streamer():
     return jsonify({'message': 'Streamer added successfully', 'id': streamer.id}), 201
 
 @app.route('/api/streamers/<int:streamer_id>', methods=['PUT'])
+@cleanup_session
 def update_streamer(streamer_id):
     """API endpoint to update a streamer"""
     streamer = Streamer.query.get_or_404(streamer_id)
@@ -1250,6 +1290,7 @@ def update_streamer(streamer_id):
     return jsonify({'message': 'Streamer updated successfully'})
 
 @app.route('/api/streamers/<int:streamer_id>', methods=['DELETE'])
+@cleanup_session
 def delete_streamer(streamer_id):
     """API endpoint to delete a streamer"""
     streamer = Streamer.query.get_or_404(streamer_id)
@@ -1264,6 +1305,7 @@ def delete_streamer(streamer_id):
     return jsonify({'message': 'Streamer deleted successfully'})
 
 @app.route('/api/recordings', methods=['GET'])
+@cleanup_session
 def get_recordings():
     """API endpoint to get recordings"""
     logger.info("GET /api/recordings called")
@@ -1349,6 +1391,7 @@ def get_recordings():
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/status')
+@cleanup_session
 def get_status():
     """API endpoint to get current system status"""
     active_streamers = Streamer.query.filter_by(is_active=True).count()
@@ -1409,6 +1452,7 @@ def check_streamer_status(streamer_id):
 
 
 @app.route('/api/active-recordings')
+@cleanup_session
 def get_active_recordings():
     """API endpoint to get currently active recordings"""
     try:
