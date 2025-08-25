@@ -2008,7 +2008,7 @@ def build_output_filename(recording, naming_scheme):
 def build_custom_filename(template, recording):
     """Build custom filename using template variables"""
     streamer = Streamer.query.get(recording.streamer_id)
-    streamer_name = streamer.username if streamer else 'unknown'
+    streamer_name = streamer.twitch_name if streamer else 'unknown'  # Use twitch_name instead of username
     twitch_name = streamer.twitch_name if streamer else 'unknown'
     
     # Clean title for filename (remove invalid characters)
