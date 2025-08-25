@@ -905,29 +905,33 @@ def record_stream(streamer_id):
     with app.app_context():
         streamer = Streamer.query.get(streamer_id)
         if not streamer:
+            logger.error(f"record_stream: streamer {streamer_id} not found")
             return
-        
-        # Rebuild config each loop to pick up twitch_name changes
-        config = AppConfig(streamer)
-        twitch_manager = TwitchManager(config)
-        streamlink_manager = StreamlinkManager(config)
-        notifier_manager = NotificationManager(config)
         
         download_path = ensure_download_directory()
         
-        while streamer.is_active:
+        while True:
+            # Always refresh the DB row first
+            streamer = Streamer.query.get(streamer_id)
+            if not streamer or not streamer.is_active:
+                logger.info(f"[record] streamer {streamer_id} deactivated; stopping monitor")
+                break
+            
+            # REBUILD config + managers EACH TICK so edits (name/quality/timer) take effect
             try:
-                # Refresh streamer from database to check if still active
-                streamer = Streamer.query.get(streamer_id)
-                if not streamer or not streamer.is_active:
-                    break
+                config = AppConfig(streamer)
+                twitch_manager = TwitchManager(config)
+                streamlink_manager = StreamlinkManager(config)
+                notifier_manager = NotificationManager(config)
+
+                # Use the fresh twitch_name from DB (not a cached user value)
+                twitch_user = streamer.twitch_name
+                stream_status, title = twitch_manager.check_user(twitch_user)
                 
-                stream_status, title = twitch_manager.check_user(config.user)
-                
-                if stream_status == StreamStatus.ONLINE:
+                if stream_status == StreamStatus.ONLINE and streamer_id not in active_by_streamer:
                     # Get additional stream info including game
                     try:
-                        user_info = twitch_manager.get_from_twitch('get_users', logins=config.user)
+                        user_info = twitch_manager.get_from_twitch('get_users', logins=twitch_user)
                         if user_info:
                             stream_info = twitch_manager.get_from_twitch('get_streams', user_id=user_info.id)
                             game_name = ""
@@ -936,13 +940,13 @@ def record_stream(streamer_id):
                                 if game_info:
                                     game_name = game_info.name
                     except Exception as e:
-                        logger.error(f"Error getting game info for {config.user}: {e}")
+                        logger.error(f"Error getting game info for {twitch_user}: {e}")
                         game_name = ""
                     
                     # Create safe filename
                     safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
                     timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
-                    filename = f"{config.user} - {timestamp} - {safe_title}"
+                    filename = f"{twitch_user} - {timestamp} - {safe_title}"
                     recorded_filename = os.path.join(download_path, filename)
                     
                     # Create recording record
@@ -957,7 +961,7 @@ def record_stream(streamer_id):
                     db.session.commit()
                     
                     # Send notification
-                    message = f"Recording {config.user} - {title}"
+                    message = f"Recording {twitch_user} - {title}"
                     notifier_manager.notify_all(message)
                     logger.info(message)
                     
@@ -976,7 +980,7 @@ def record_stream(streamer_id):
                         sl_logger = logging.getLogger("streamlink")
                         sl_logger.setLevel(logging.INFO)
                         sl_logger.addHandler(fh)
-                        rec_logger.info(f"Begin recording streamer={config.user} id={recording.id} file={recorded_filename}")
+                        rec_logger.info(f"Begin recording streamer={twitch_user} id={recording.id} file={recorded_filename}")
 
                         # cooperative stop flag
                         stop_event = threading.Event()
@@ -1013,7 +1017,7 @@ def record_stream(streamer_id):
                         else:
                             # Fallback: Python library path
                             result = streamlink_manager.run_streamlink(
-                                config.user, recorded_filename, stop_event=stop_event, logger=rec_logger
+                                twitch_user, recorded_filename, stop_event=stop_event, logger=rec_logger
                             )
 
                         # finalize status based on stop vs natural end and disk state
@@ -1045,7 +1049,7 @@ def record_stream(streamer_id):
                         except Exception:
                             pass
                         
-                        message = f"Stream {config.user} completed. File saved as {filename}"
+                        message = f"Stream {twitch_user} completed. File saved as {filename}"
                         logger.info(message)
                         notifier_manager.notify_all(message)
                         
@@ -1053,15 +1057,18 @@ def record_stream(streamer_id):
                         recording.status = 'failed'
                         recording.ended_at = datetime.utcnow()
                         db.session.commit()
-                        logger.error(f"Recording failed for {config.user}: {e}")
+                        logger.error(f"Recording failed for {twitch_user}: {e}")
                         
                 elif stream_status == StreamStatus.ERROR:
-                    logger.error(f"Error checking status for {config.user}")
+                    logger.error(f"Error checking status for {twitch_user}")
+                else:
+                    logger.debug(f"[record] {streamer.username} offline (status={stream_status}); recheck later")
                     
             except Exception as e:
-                logger.error(f"Unexpected error in recording loop for {config.user}: {e}")
+                logger.exception(f"[record] loop error for streamer {streamer_id}: {e}")
             
-            time.sleep(config.timer)
+            # sleep based on current (possibly updated) timer
+            time.sleep(max(5, int(streamer.timer or 60)))
 
 # Routes
 @app.route('/')
