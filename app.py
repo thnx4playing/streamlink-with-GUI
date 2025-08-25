@@ -649,6 +649,12 @@ def template_scheduler_loop():
             except Exception as e:
                 logger.exception(f"Template scheduler error: {e}")
                 time.sleep(5)  # Wait 5 seconds on error
+            finally:
+                # Ensure no connection remains checked-out between iterations
+                try:
+                    db.session.remove()
+                except Exception as se:
+                    logger.warning(f"Scheduler: session cleanup error: {se}")
 
 def conversion_worker_loop():
     """Run in a daemon thread with an active Flask app context."""
@@ -1005,6 +1011,11 @@ def record_stream(streamer_id):
                     )
                     db.session.add(recording)
                     db.session.commit()
+                    # Free connection before long-running external operations
+                    try:
+                        db.session.remove()
+                    except Exception as ce:
+                        logger.warning(f"record_stream: session cleanup after create failed: {ce}")
                     
                     # Send notification
                     message = f"Recording {twitch_user} - {title}"
@@ -1056,6 +1067,11 @@ def record_stream(streamer_id):
                             info["proc"] = proc
                             recording.pid = proc.pid
                             db.session.commit()
+                            # Free connection before long-running external operations
+                            try:
+                                db.session.remove()
+                            except Exception as ce:
+                                logger.warning(f"record_stream: session cleanup after pid commit failed: {ce}")
                             rc = proc.wait()
                             rec_logger.info("CLI exited rc=%s", rc)
                             # mimic library-result shape for status logic below
@@ -2135,6 +2151,31 @@ def build_custom_filename(template, recording):
         filename += '.mp4'
     
     return filename
+
+# ---- Enforce session cleanup on routes that missed the decorator ----
+_routes_needing_cleanup = [
+    # safe to wrap even if they don't use the DB heavily
+    'get_disk_space',
+    # DB-reading/writing endpoints that were not decorated
+    'check_streamer_status',
+    'stop_recording',
+    'create_sample_recording',
+    'get_conversion_settings',
+    'save_conversion_settings',
+    'delete_recording',
+    'convert_recordings',
+    'get_conversion_progress',
+    'cancel_conversion_job',
+    'remove_conversion_job_from_history',
+    'delete_converted_file',
+    'remove_recording_from_history',
+    'reschedule_conversion_job',
+    'create_schedule_template',
+    'get_schedule_templates',
+]
+for _name in _routes_needing_cleanup:
+    if _name in app.view_functions:
+        app.view_functions[_name] = cleanup_session(app.view_functions[_name])
 
 if __name__ == '__main__':
     # Create database tables with retry logic
