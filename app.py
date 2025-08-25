@@ -1453,8 +1453,10 @@ def stop_recording(recording_id):
         flag = recording_stop_flags.get(recording_id)
         if flag:
             flag.set()
+            logger.info(f"Set cooperative stop flag for recording {recording_id}")
         else:
             logger.warning(f"No stop flag for recording {recording_id}; it may have already ended")
+        
         # Give the loop time to flush and finalize (not rename .part)
         wait_until = time.time() + 15
         while time.time() < wait_until:
@@ -1463,6 +1465,23 @@ def stop_recording(recording_id):
             if os.path.exists(part_path) and not os.path.exists(ts_path):
                 break
             time.sleep(0.5)
+        
+        # Hard stop fallback: terminate process if still running after grace period
+        proc_info = recording_procinfo.get(recording_id)
+        if proc_info and proc_info.get("proc"):
+            proc = proc_info["proc"]
+            if proc.poll() is None:  # Process is still running
+                logger.warning(f"Recording {recording_id} didn't stop cooperatively, terminating process {proc.pid}")
+                try:
+                    proc.terminate()
+                    # Give terminate a moment to work
+                    time.sleep(2)
+                    if proc.poll() is None:  # Still running, force kill
+                        logger.warning(f"Process {proc.pid} didn't terminate, killing it")
+                        proc.kill()
+                except Exception as e:
+                    logger.error(f"Error terminating process {proc.pid}: {e}")
+        
         # Finalize DB status
         recording.ended_at = datetime.utcnow()
         if recording.started_at:
