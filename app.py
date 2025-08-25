@@ -908,6 +908,7 @@ def record_stream(streamer_id):
             logger.error(f"record_stream: streamer {streamer_id} not found")
             return
         
+        notifier_manager = NotificationManager(AppConfig(streamer))
         download_path = ensure_download_directory()
         
         while True:
@@ -917,12 +918,11 @@ def record_stream(streamer_id):
                 logger.info(f"[record] streamer {streamer_id} deactivated; stopping monitor")
                 break
             
-            # REBUILD config + managers EACH TICK so edits (name/quality/timer) take effect
+            # REBUILD managers each tick so edits take effect
             try:
                 config = AppConfig(streamer)
                 twitch_manager = TwitchManager(config)
                 streamlink_manager = StreamlinkManager(config)
-                notifier_manager = NotificationManager(config)
 
                 # Use the fresh twitch_name from DB (not a cached user value)
                 twitch_user = streamer.twitch_name
