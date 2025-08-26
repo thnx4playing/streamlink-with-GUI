@@ -1294,8 +1294,12 @@ def record_stream(streamer_id):
                         stop_event = threading.Event()
                         recording_stop_flags[recording_id] = stop_event
 
+                        # Get fresh streamer and auth objects after session removal
+                        with app.app_context():
+                            streamer = Streamer.query.get(streamer_id)
+                            auth = TwitchAuth.query.first()
+                        
                         use_cli = looks_like_twitch(streamer)
-                        auth = TwitchAuth.query.first()
                         if use_cli:
                             # Build CLI and launch subprocess; capture stdout to per-recording file
                             cmd = build_twitch_cli_cmd(streamer.twitch_name, recorded_filename, auth)
@@ -1355,7 +1359,7 @@ def record_stream(streamer_id):
                             # Start the robust watchdog
                             watchdog_thread = threading.Thread(
                                 target=_watchdog_stop_when_idle_or_offline,
-                                args=(recording_id, ts_out_path, proc, twitch_manager, streamer.twitch_name),
+                                args=(recording_id, ts_out_path, proc, twitch_manager, twitch_user),
                                 daemon=True,
                                 name=f"watchdog-{recording_id}"
                             )
