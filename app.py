@@ -135,6 +135,61 @@ def _is_twitch_live(username: str) -> bool:
     except Exception:
         return True  # fail-open to avoid flapping on API hiccups
 
+def _watchdog_stop_when_idle_or_offline(
+    rec_id: int,
+    path_ts: str,
+    proc: subprocess.Popen,
+    twitch_mgr: "TwitchManager",
+    twitch_name: str,
+    poll_secs: int = 15,
+    idle_timeout_secs: int = 240,   # 4 minutes of no growth
+    offline_grace_checks: int = 3,  # require 3 consecutive "offline" checks
+) -> None:
+    """Cooperative watchdog: stops the recording when Twitch is offline and
+    the TS file has not grown for a while. Works even if streamlink hangs."""
+    last_size = 0
+    last_growth_ts = time.time()
+    consecutive_offline = 0
+
+    while proc.poll() is None and not recording_stop_flags.get(rec_id):
+        try:
+            # 1) file growth check
+            if os.path.exists(path_ts):
+                sz = os.path.getsize(path_ts)
+                if sz > last_size:
+                    last_size = sz
+                    last_growth_ts = time.time()
+
+            idle_for = time.time() - last_growth_ts
+
+            # 2) Twitch status check (guard errors — don't crash watchdog)
+            is_offline = False
+            try:
+                status, _title = twitch_mgr.check_user(twitch_name)
+                is_offline = (status == StreamStatus.OFFLINE)
+            except Exception:
+                is_offline = False
+
+            consecutive_offline = (consecutive_offline + 1) if is_offline else 0
+
+            # Decision: both offline (with grace) AND idle long enough
+            if consecutive_offline >= offline_grace_checks and idle_for >= idle_timeout_secs:
+                logger.info(f"WATCHDOG: Recording {rec_id} stopped - offline for {consecutive_offline} checks and idle for {idle_for:.0f}s")
+                recording_stop_flags[rec_id].set()
+                break
+
+            time.sleep(poll_secs)
+        except Exception as e:
+            # Never let watchdog crash; just keep going
+            logger.warning(f"WATCHDOG: Error in watchdog for recording {rec_id}: {e}")
+            time.sleep(poll_secs)
+            continue
+
+    # If process is still alive but we decided to stop, ask it to terminate
+    if proc.poll() is None and recording_stop_flags.get(rec_id) and recording_stop_flags[rec_id].is_set():
+        logger.info(f"WATCHDOG: Terminating process for recording {rec_id}")
+        _safe_terminate(proc, timeout=10)
+
 def _salvage_recording_files(ts_path: str, part_path: str) -> bool:
     """
     Returns True if we end up with a usable .ts (by keeping existing .ts
@@ -365,7 +420,7 @@ class Recording(db.Model):
     streamer_id = db.Column(db.Integer, db.ForeignKey('streamer.id'), nullable=False)
     filename = db.Column(db.String(255), nullable=False)
     title = db.Column(db.String(255))
-    status = db.Column(db.String(20), default='recording')  # recording, completed, failed, deleted
+    status = db.Column(db.String(20), default='recording')  # recording, completed, stopped, failed, deleted
     started_at = db.Column(db.DateTime, default=datetime.utcnow)
     ended_at = db.Column(db.DateTime)
     file_size = db.Column(db.Integer)  # in bytes
@@ -774,7 +829,7 @@ def template_scheduler_loop():
                     # Pick recordings that look "ready to convert"
                     ready_query = (
                         db.session.query(Recording)
-                        .filter(Recording.status == 'completed')
+                        .filter(Recording.status.in_(['completed', 'stopped']))
                     )
 
                     ready = ready_query.all()
@@ -977,10 +1032,10 @@ def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
         if auth.client_id:
             cmd += ["--http-header", f"Client-ID={auth.client_id}"]
 
-    # Version-safe stability flags for 7.1.3+ (tightened to prevent lingering)
+    # Version-safe stability flags for 7.1.3+ (sane retry limits to prevent hanging)
     cmd += [
-        "--retry-open", "2",
-        "--retry-streams", "1",
+        "--retry-open", "3",
+        "--retry-streams", "3",
         "--stream-timeout", "30",         # reduced from 60s to 30s
         "--stream-segment-timeout", "15", # reduced from 20s to 15s
         "--hls-live-edge", "3",
@@ -1297,19 +1352,15 @@ def record_stream(streamer_id):
                                 except Exception as e:
                                     rec_logger.error(f"Failed to set status detail: {e}")
                             
-                            watchdog_thread = start_recording_watchdog(
-                                proc=proc,
-                                out_path=ts_out_path,
-                                twitch_name=streamer.twitch_name,
-                                offline_check_fn=_is_twitch_live,
-                                stop_event=stop_event,
-                                offline_grace_s=conv_settings.watchdog_offline_grace_s,
-                                stall_timeout_s=conv_settings.watchdog_stall_timeout_s,
-                                max_duration_s=conv_settings.watchdog_max_duration_s,
-                                logger=rec_logger,
-                                status_callback=set_status_detail
+                            # Start the robust watchdog
+                            watchdog_thread = threading.Thread(
+                                target=_watchdog_stop_when_idle_or_offline,
+                                args=(recording_id, ts_out_path, proc, twitch_manager, streamer.twitch_name),
+                                daemon=True,
+                                name=f"watchdog-{recording_id}"
                             )
-                            rec_logger.info(f"Started watchdog for recording {recording_id} (grace={conv_settings.watchdog_offline_grace_s}s, stall={conv_settings.watchdog_stall_timeout_s}s, max={conv_settings.watchdog_max_duration_s}s)")
+                            watchdog_thread.start()
+                            rec_logger.info(f"Started watchdog for recording {recording_id}")
                             
                             rc = proc.wait()
                             rec_logger.info("CLI exited rc=%s", rc)
@@ -1330,10 +1381,16 @@ def record_stream(streamer_id):
                         final_ok = _salvage_recording_files(ts_path, part_path)
                         
                         if final_ok:
-                            recording.status = 'completed'
+                            # Check if this was a manual stop (check stop flag)
+                            if recording_stop_flags.get(recording_id) and recording_stop_flags[recording_id].is_set():
+                                recording.status = 'stopped'
+                                recording.status_detail = "Stopped by user"
+                                rec_logger.info(f"Recording stopped by user (file size: {recording.file_size})")
+                            else:
+                                recording.status = 'completed'
+                                recording.status_detail = "Completed successfully"
+                                rec_logger.info(f"Recording completed successfully (file size: {recording.file_size})")
                             recording.file_size = os.path.getsize(ts_path)
-                            recording.status_detail = "Completed successfully"
-                            rec_logger.info(f"Recording completed successfully (file size: {recording.file_size})")
                         else:
                             recording.status = 'failed'
                             recording.status_detail = "No usable file found"
@@ -1820,10 +1877,17 @@ def stop_recording(recording_id):
         final_ok = _salvage_recording_files(ts_path, part_path)
         
         if final_ok:
-            recording.status = 'completed'   # stopped by user, but file is usable
-            recording.file_size = os.path.getsize(ts_path)
-            recording.status_detail = "Stopped by user"
-            logger.info(f"Recording {recording_id} stopped by user but file salvaged successfully")
+            # Check if file is meaningful size (5MB minimum)
+            file_size = os.path.getsize(ts_path)
+            if file_size > 5 * 1024 * 1024:  # 5MB
+                recording.status = 'stopped'   # stopped by user, but file is usable
+                recording.status_detail = "Stopped by user"
+                logger.info(f"Recording {recording_id} stopped by user - file preserved ({file_size} bytes)")
+            else:
+                recording.status = 'failed'    # file too small to be meaningful
+                recording.status_detail = "Stopped by user - file too small"
+                logger.warning(f"Recording {recording_id} stopped by user - file too small ({file_size} bytes)")
+            recording.file_size = file_size
         else:
             recording.status = 'failed'      # nothing salvageable
             recording.status_detail = "Stopped by user - no usable file"
