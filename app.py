@@ -1203,6 +1203,10 @@ def record_stream(streamer_id):
                     )
                     db.session.add(recording)
                     db.session.commit()
+                    
+                    # Get recording ID before removing session
+                    recording_id = recording.id
+                    
                     # Free connection before long-running external operations
                     try:
                         db.session.remove()
@@ -1218,22 +1222,22 @@ def record_stream(streamer_id):
                     try:
                         # per-recording logger file
                         os.makedirs(log_dir, exist_ok=True)
-                        rec_log_path = f"{log_dir}/recording_{recording.id}.log"
+                        rec_log_path = f"{log_dir}/recording_{recording_id}.log"
                         _fmt = logging.Formatter("%(asctime)s [%(levelname)s] rec-%(name)s: %(message)s")
                         fh = logging.FileHandler(rec_log_path, encoding="utf-8")
                         fh.setFormatter(_fmt)
-                        rec_logger = logging.getLogger(f"rec.{recording.id}")
+                        rec_logger = logging.getLogger(f"rec.{recording_id}")
                         rec_logger.setLevel(logging.INFO)
                         rec_logger.addHandler(fh)
                         # also pipe streamlink's own logs
                         sl_logger = logging.getLogger("streamlink")
                         sl_logger.setLevel(logging.INFO)
                         sl_logger.addHandler(fh)
-                        rec_logger.info(f"Begin recording streamer={twitch_user} id={recording.id} file={recorded_filename}")
+                        rec_logger.info(f"Begin recording streamer={twitch_user} id={recording_id} file={recorded_filename}")
 
                         # cooperative stop flag
                         stop_event = threading.Event()
-                        recording_stop_flags[recording.id] = stop_event
+                        recording_stop_flags[recording_id] = stop_event
 
                         use_cli = looks_like_twitch(streamer)
                         auth = TwitchAuth.query.first()
@@ -1246,8 +1250,8 @@ def record_stream(streamer_id):
                                 proc_env["STREAMLINK_TWITCH_CLIENT_ID"] = (auth.client_id or "")
                                 proc_env["STREAMLINK_TWITCH_AUTH_TOKEN"] = _normalize_twitch_token(auth.oauth_token or "")
                             info = {"pid": None, "proc": None, "stop_flag": stop_event}
-                            recording_procinfo[recording.id] = info
-                            active_by_streamer[streamer.id] = recording.id
+                            recording_procinfo[recording_id] = info
+                            active_by_streamer[streamer.id] = recording_id
                             proc = subprocess.Popen(
                                 cmd,
                                 stdout=open(f"{log_dir}/recording_{recording.id}.log", "a", encoding="utf-8"),
@@ -1259,8 +1263,13 @@ def record_stream(streamer_id):
                             )
                             info["pid"] = proc.pid
                             info["proc"] = proc
-                            recording.pid = proc.pid
-                            db.session.commit()
+                            
+                            # Update recording PID in database
+                            with app.app_context():
+                                recording = Recording.query.get(recording_id)
+                                if recording:
+                                    recording.pid = proc.pid
+                                    db.session.commit()
                             # Free connection before long-running external operations
                             try:
                                 db.session.remove()
@@ -1280,8 +1289,11 @@ def record_stream(streamer_id):
                             # Create status callback for watchdog
                             def set_status_detail(detail):
                                 try:
-                                    recording.status_detail = detail
-                                    db.session.commit()
+                                    with app.app_context():
+                                        recording = Recording.query.get(recording_id)
+                                        if recording:
+                                            recording.status_detail = detail
+                                            db.session.commit()
                                 except Exception as e:
                                     rec_logger.error(f"Failed to set status detail: {e}")
                             
@@ -1297,7 +1309,7 @@ def record_stream(streamer_id):
                                 logger=rec_logger,
                                 status_callback=set_status_detail
                             )
-                            rec_logger.info(f"Started watchdog for recording {recording.id} (grace={conv_settings.watchdog_offline_grace_s}s, stall={conv_settings.watchdog_stall_timeout_s}s, max={conv_settings.watchdog_max_duration_s}s)")
+                            rec_logger.info(f"Started watchdog for recording {recording_id} (grace={conv_settings.watchdog_offline_grace_s}s, stall={conv_settings.watchdog_stall_timeout_s}s, max={conv_settings.watchdog_max_duration_s}s)")
                             
                             rc = proc.wait()
                             rec_logger.info("CLI exited rc=%s", rc)
