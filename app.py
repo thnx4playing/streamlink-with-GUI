@@ -443,6 +443,54 @@ conversion_wakeup = threading.Event()
 # Track conversion processes for hard-stop fallback
 conversion_processes = {}  # {job_id: {"proc": Popen, "pid": int}}
 
+def ensure_database_migrated():
+    """Ensure database schema is up to date with all required columns"""
+    try:
+        with db.engine.connect() as conn:
+            # Check if status_detail column exists in recording table
+            result = conn.execute(db.text("PRAGMA table_info(recording)"))
+            columns = [row[1] for row in result.fetchall()]
+            
+            # Add missing columns to recording table
+            missing_columns = []
+            if 'status_detail' not in columns:
+                missing_columns.append('status_detail')
+            
+            for col in missing_columns:
+                if col == 'status_detail':
+                    conn.execute(db.text("ALTER TABLE recording ADD COLUMN status_detail VARCHAR(255)"))
+                    logger.info("Added status_detail column to recording table")
+            
+            # Check twitch_auth table
+            result = conn.execute(db.text("PRAGMA table_info(twitch_auth)"))
+            auth_columns = [row[1] for row in result.fetchall()]
+            
+            if 'enable_hls_live_restart' not in auth_columns:
+                conn.execute(db.text("ALTER TABLE twitch_auth ADD COLUMN enable_hls_live_restart BOOLEAN DEFAULT 0"))
+                logger.info("Added enable_hls_live_restart column to twitch_auth table")
+            
+            # Check conversion_settings table
+            result = conn.execute(db.text("PRAGMA table_info(conversion_settings)"))
+            settings_columns = [row[1] for row in result.fetchall()]
+            
+            watchdog_columns = ['watchdog_offline_grace_s', 'watchdog_stall_timeout_s', 'watchdog_max_duration_s']
+            for col in watchdog_columns:
+                if col not in settings_columns:
+                    if col == 'watchdog_offline_grace_s':
+                        conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN watchdog_offline_grace_s INTEGER DEFAULT 90"))
+                    elif col == 'watchdog_stall_timeout_s':
+                        conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN watchdog_stall_timeout_s INTEGER DEFAULT 180"))
+                    elif col == 'watchdog_max_duration_s':
+                        conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN watchdog_max_duration_s INTEGER DEFAULT 28800"))
+                    logger.info(f"Added {col} column to conversion_settings table")
+            
+            conn.commit()
+            logger.info("Database migration check completed")
+            
+    except Exception as e:
+        logger.error(f"Database migration check failed: {e}")
+        # Don't raise the exception, just log it
+
 def get_download_path():
     """Get the download path from environment or use default"""
     return os.getenv('DOWNLOAD_PATH', './download')
@@ -1316,6 +1364,9 @@ def record_stream(streamer_id):
 @app.route('/')
 def index():
     """Main dashboard"""
+    # Ensure database is migrated before querying
+    ensure_database_migrated()
+    
     streamers = Streamer.query.all()
     recordings = Recording.query.order_by(Recording.started_at.desc()).limit(10).all()
     
@@ -1504,6 +1555,9 @@ def delete_streamer(streamer_id):
 @cleanup_session
 def get_recordings():
     """API endpoint to get recordings"""
+    # Ensure database is migrated before querying
+    ensure_database_migrated()
+    
     logger.info("GET /api/recordings called")
     try:
         page = request.args.get('page', 1, type=int)
@@ -1658,6 +1712,9 @@ def check_streamer_status(streamer_id):
 @cleanup_session
 def get_active_recordings():
     """API endpoint to get currently active recordings"""
+    # Ensure database is migrated before querying
+    ensure_database_migrated()
+    
     try:
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 6, type=int)  # Default 6 per page
