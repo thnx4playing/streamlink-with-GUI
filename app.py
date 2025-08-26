@@ -2451,11 +2451,14 @@ if __name__ == '__main__':
                     # Add new columns to recording if missing
                     for ddl in [
                         "ALTER TABLE recording ADD COLUMN pid INTEGER",
-                        "ALTER TABLE recording ADD COLUMN session_guid VARCHAR(36)"
+                        "ALTER TABLE recording ADD COLUMN session_guid VARCHAR(36)",
+                        "ALTER TABLE recording ADD COLUMN status_detail VARCHAR(255)"
                     ]:
                         try: conn.execute(db.text(ddl))
                         except Exception: pass
                     try: conn.execute(db.text("ALTER TABLE twitch_auth ADD COLUMN extra_flags VARCHAR(512)"))
+                    except Exception: pass
+                    try: conn.execute(db.text("ALTER TABLE twitch_auth ADD COLUMN enable_hls_live_restart BOOLEAN DEFAULT 0"))
                     except Exception: pass
                 
                 # Check if we need to migrate the database schema
@@ -2493,7 +2496,7 @@ if __name__ == '__main__':
                         settings_columns = [row[1] for row in result.fetchall()]
                         
                         # Check if new columns exist in conversion_settings
-                        new_settings_columns = ['output_volume_path', 'custom_filename_template', 'delete_original_after_conversion']
+                        new_settings_columns = ['output_volume_path', 'custom_filename_template', 'delete_original_after_conversion', 'watchdog_offline_grace_s', 'watchdog_stall_timeout_s', 'watchdog_max_duration_s']
                         missing_settings_columns = [col for col in new_settings_columns if col not in settings_columns]
                         
                         if missing_settings_columns:
@@ -2507,6 +2510,12 @@ if __name__ == '__main__':
                                     conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN custom_filename_template VARCHAR(500)"))
                                 elif col == 'delete_original_after_conversion':
                                     conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN delete_original_after_conversion BOOLEAN DEFAULT 0"))
+                                elif col == 'watchdog_offline_grace_s':
+                                    conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN watchdog_offline_grace_s INTEGER DEFAULT 90"))
+                                elif col == 'watchdog_stall_timeout_s':
+                                    conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN watchdog_stall_timeout_s INTEGER DEFAULT 180"))
+                                elif col == 'watchdog_max_duration_s':
+                                    conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN watchdog_max_duration_s INTEGER DEFAULT 28800"))
                             
                             conn.commit()
                             logger.info("Conversion settings migration completed successfully")
