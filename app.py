@@ -142,39 +142,80 @@ def _watchdog_stop_when_idle_or_offline(
     twitch_mgr: "TwitchManager",
     twitch_name: str,
     poll_secs: int = 15,
-    idle_timeout_secs: int = 240,   # 4 minutes of no growth
-    offline_grace_checks: int = 3,  # require 3 consecutive "offline" checks
+    idle_timeout_secs: int = 480,   # 8 minutes of no growth (increased from 4)
+    offline_grace_checks: int = 5,  # require 5 consecutive "offline" checks (increased from 3)
+    max_duration_hours: int = 8,    # Maximum recording duration in hours
 ) -> None:
     """Cooperative watchdog: stops the recording when Twitch is offline and
     the TS file has not grown for a while. Works even if streamlink hangs."""
     last_size = 0
     last_growth_ts = time.time()
     consecutive_offline = 0
+    consecutive_errors = 0
+    start_time = time.time()
 
-    while proc.poll() is None and not recording_stop_flags.get(rec_id):
+    logger.info(f"WATCHDOG: Started for recording {rec_id} - idle_timeout={idle_timeout_secs}s, offline_grace={offline_grace_checks}, max_duration={max_duration_hours}h")
+
+    flag = recording_stop_flags.get(rec_id)
+    while proc.poll() is None and not (flag and flag.is_set()):
         try:
-            # 1) file growth check
+            # 1) Check maximum duration (safety net)
+            elapsed_hours = (time.time() - start_time) / 3600
+            if elapsed_hours >= max_duration_hours:
+                logger.warning(f"WATCHDOG: Recording {rec_id} hit maximum duration {max_duration_hours}h, stopping")
+                recording_stop_flags[rec_id].set()
+                break
+
+            # 2) File growth check with double-verification
             if os.path.exists(path_ts):
                 sz = os.path.getsize(path_ts)
                 if sz > last_size:
                     last_size = sz
                     last_growth_ts = time.time()
+                    logger.debug(f"WATCHDOG: Recording {rec_id} file grew to {sz} bytes")
 
             idle_for = time.time() - last_growth_ts
 
-            # 2) Twitch status check (guard errors — don't crash watchdog)
+            # 3) Twitch status check (guard errors — don't crash watchdog)
             is_offline = False
             try:
                 status, _title = twitch_mgr.check_user(twitch_name)
                 is_offline = (status == StreamStatus.OFFLINE)
-            except Exception:
-                is_offline = False
+                consecutive_errors = 0  # Reset error counter on successful API call
+                
+                if is_offline:
+                    logger.debug(f"WATCHDOG: Recording {rec_id} detected offline ({consecutive_offline + 1}/{offline_grace_checks})")
+                else:
+                    if consecutive_offline > 0:
+                        logger.debug(f"WATCHDOG: Recording {rec_id} back online, resetting offline counter")
+            except Exception as e:
+                consecutive_errors += 1
+                logger.warning(f"WATCHDOG: Error checking Twitch status for {twitch_name} (error #{consecutive_errors}): {e}")
+                
+                # Treat repeated API errors as offline to avoid endless waits
+                if consecutive_errors >= 3:  # After 3 consecutive API failures, treat as offline
+                    logger.warning(f"WATCHDOG: Recording {rec_id} treating repeated API errors as offline (error #{consecutive_errors})")
+                    is_offline = True
+                else:
+                    is_offline = False  # Fail-open for first few errors
 
             consecutive_offline = (consecutive_offline + 1) if is_offline else 0
 
-            # Decision: both offline (with grace) AND idle long enough
-            if consecutive_offline >= offline_grace_checks and idle_for >= idle_timeout_secs:
-                logger.info(f"WATCHDOG: Recording {rec_id} stopped - offline for {consecutive_offline} checks and idle for {idle_for:.0f}s")
+            # 4) Stall detection with double-check for transient pauses
+            if idle_for >= idle_timeout_secs and consecutive_offline >= offline_grace_checks:
+                # Double-check file size after a short wait to avoid false positives
+                time.sleep(5)
+                if os.path.exists(path_ts):
+                    new_sz = os.path.getsize(path_ts)
+                    if new_sz > last_size:
+                        # File grew during our check, reset the timer
+                        last_size = new_sz
+                        last_growth_ts = time.time()
+                        logger.info(f"WATCHDOG: Recording {rec_id} file grew during stall check, continuing")
+                        time.sleep(poll_secs - 5)  # Adjust sleep since we already waited 5s
+                        continue
+
+                logger.info(f"WATCHDOG: Recording {rec_id} stopping - offline for {consecutive_offline} consecutive checks and stalled for {idle_for:.0f}s")
                 recording_stop_flags[rec_id].set()
                 break
 
@@ -188,7 +229,7 @@ def _watchdog_stop_when_idle_or_offline(
     # If process is still alive but we decided to stop, ask it to terminate
     if proc.poll() is None and recording_stop_flags.get(rec_id) and recording_stop_flags[rec_id].is_set():
         logger.info(f"WATCHDOG: Terminating process for recording {rec_id}")
-        _safe_terminate(proc, timeout=10)
+        _safe_terminate(proc, timeout=15)  # Increased timeout
 
 def _salvage_recording_files(ts_path: str, part_path: str) -> bool:
     """
@@ -205,6 +246,84 @@ def _salvage_recording_files(ts_path: str, part_path: str) -> bool:
     except Exception:
         logger.exception("Failed to finalize/rename recording files")
     return False
+
+def _bulletproof_finalize_recording(
+    recording_id: int, 
+    recorded_filename: str, 
+    streamer_id: int,
+    rec_logger: logging.Logger,
+    was_manual_stop: bool = False
+) -> None:
+    """
+    Bulletproof finalization that ALWAYS cleans up in-memory maps and commits status.
+    This runs in try/finally to ensure cleanup happens even if DB operations fail.
+    """
+    ts_path = f"{recorded_filename}.ts"
+    part_path = f"{recorded_filename}.part"
+    
+    def _stat(p):
+        try: 
+            return os.path.exists(p), (os.path.getsize(p) if os.path.exists(p) else -1)
+        except: 
+            return False, -1
+
+    exists_ts, size_ts = _stat(ts_path)
+    exists_part, size_part = _stat(part_path)
+    rec_logger.info(f"FINALIZE: exists_ts={exists_ts} size_ts={size_ts} exists_part={exists_part} size_part={size_part}")
+
+    # Prefer on-disk truth over return code
+    final_ok = _salvage_recording_files(ts_path, part_path)
+    status = "completed" if final_ok else "failed"
+    
+    # Override status for manual stops
+    if was_manual_stop and final_ok:
+        status = "stopped"
+    
+    # Commit status with a fresh session & app context
+    with app.app_context():
+        try:
+            rec = Recording.query.get(recording_id)
+            if rec:
+                rec.status = status
+                if status == "completed":
+                    rec.status_detail = "Completed successfully"
+                elif status == "stopped":
+                    rec.status_detail = "Stopped by user or watchdog"
+                else:
+                    rec.status_detail = "No usable file found"
+                    
+                rec.ended_at = datetime.utcnow()
+                
+                # Calculate duration
+                if rec.started_at:
+                    rec.duration = int((rec.ended_at - rec.started_at).total_seconds())
+                
+                # Set file size if we have a usable file
+                if final_ok:
+                    try:
+                        rec.file_size = os.path.getsize(ts_path)
+                    except Exception:
+                        rec.file_size = 0
+                
+                db.session.commit()
+                rec_logger.info(f"FINALIZE: Committed status={status} size={rec.file_size} duration={rec.duration}s")
+        except Exception as e:
+            logger.exception(f"FINALIZE: Database commit failed for recording {recording_id}: {e}")
+        finally:
+            # CRITICAL: Always clear in-memory maps so UI doesn't think it's still running
+            try:
+                active_by_streamer.pop(streamer_id, None)
+                recording_procinfo.pop(recording_id, None)
+                recording_stop_flags.pop(recording_id, None)
+                rec_logger.info(f"FINALIZE: Cleaned up in-memory tracking for recording {recording_id}")
+            except Exception as e:
+                logger.warning(f"FINALIZE: Error cleaning up in-memory maps: {e}")
+            
+            # Clean up database session
+            try:
+                db.session.remove()
+            except Exception as e:
+                logger.warning(f"FINALIZE: Session cleanup error: {e}")
 
 # Load environment variables
 load_dotenv()
@@ -550,6 +669,20 @@ def get_download_path():
     """Get the download path from environment or use default"""
     return os.getenv('DOWNLOAD_PATH', './download')
 
+def _validate_container_paths():
+    """Validate that container paths are correctly configured to avoid mount issues"""
+    download_path = os.getenv('DOWNLOAD_PATH', './download')
+    if not download_path.startswith('/app/'):
+        logger.warning(f"DOWNLOAD_PATH={download_path} is not inside the container volume (/app/). This can cause missing files if the path is not properly mounted.")
+        logger.warning("Recommended: Set DOWNLOAD_PATH=/app/download in your .env file")
+    
+    # Also validate converted path consistency
+    converted_path = get_converted_path()
+    if not converted_path.startswith('/app/'):
+        logger.warning(f"CONVERTED_PATH={converted_path} is not inside the container volume (/app/). This can cause conversion issues.")
+        
+    logger.info(f"Container paths validated - DOWNLOAD_PATH={download_path}, CONVERTED_PATH={converted_path}")
+
 def get_converted_path():
     """Get the converted files path from environment or use default"""
     # Always use the internal container path for converted files
@@ -735,7 +868,16 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
     # Build ffmpeg cmd using preset
     cmd = _build_ffmpeg_cmd(ts_path, mp4_path, settings)
     _update_job_progress(job, "Starting ffmpeg…", session)
-    conversion_logger.info(f"Starting conversion job {job.id}: {os.path.basename(ts_path)} -> {os.path.basename(mp4_path)}")
+    
+    # Enhanced logging for troubleshooting
+    conversion_logger.info(f"=== CONVERSION JOB {job.id} START ===")
+    conversion_logger.info(f"Input file: {ts_path}")
+    conversion_logger.info(f"Output file: {mp4_path}")
+    conversion_logger.info(f"Input exists: {os.path.exists(ts_path)}")
+    conversion_logger.info(f"Input size: {os.path.getsize(ts_path) if os.path.exists(ts_path) else 'N/A'} bytes")
+    conversion_logger.info(f"Output dir exists: {os.path.exists(out_dir)}")
+    conversion_logger.info(f"FFmpeg command: {' '.join(cmd)}")
+    conversion_logger.info(f"Delete original after conversion: {getattr(job, 'delete_original', False)}")
     
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -771,20 +913,40 @@ def _run_ffmpeg_conversion(job: "ConversionJob", session=None):
                     _maybe_update_progress(last_line[-120:])
         rc = proc.wait()
         conversion_logger.info(f"FFmpeg process completed with return code: {rc}")
-        if rc == 0 and os.path.exists(mp4_path):
-            conversion_logger.info(f"Conversion completed successfully: {os.path.basename(mp4_path)}")
+        
+        # Enhanced completion logging
+        output_exists = os.path.exists(mp4_path)
+        output_size = os.path.getsize(mp4_path) if output_exists else 0
+        input_size_after = os.path.getsize(ts_path) if os.path.exists(ts_path) else 0
+        
+        conversion_logger.info(f"=== CONVERSION JOB {job.id} RESULT ===")
+        conversion_logger.info(f"FFmpeg return code: {rc}")
+        conversion_logger.info(f"Output file exists: {output_exists}")
+        conversion_logger.info(f"Output file size: {output_size} bytes")
+        conversion_logger.info(f"Input file still exists: {os.path.exists(ts_path)}")
+        conversion_logger.info(f"Input file size after: {input_size_after} bytes")
+        
+        if rc == 0 and output_exists:
+            conversion_logger.info(f"✅ Conversion SUCCESSFUL: {os.path.basename(ts_path)} -> {os.path.basename(mp4_path)} ({output_size} bytes)")
+            
             # Set the output filename for the job
             job.output_filename = os.path.basename(mp4_path)
+            
+            # Log file preservation/deletion clearly
             if job.delete_original and os.path.exists(ts_path):
                 try: 
+                    conversion_logger.info(f"🗑️ DELETE_ORIGINAL=True: Removing source file {ts_path}")
                     os.remove(ts_path)
-                    conversion_logger.info(f"Deleted original file: {os.path.basename(ts_path)}")
+                    conversion_logger.info(f"✅ Successfully deleted original file: {os.path.basename(ts_path)}")
                 except Exception as e:
-                    conversion_logger.warning(f"Failed to delete original file {os.path.basename(ts_path)}: {e}")
+                    conversion_logger.warning(f"❌ Failed to delete original file {os.path.basename(ts_path)}: {e}")
+            else:
+                conversion_logger.info(f"💾 DELETE_ORIGINAL=False: Preserving source file {ts_path}")
+                
             # Let the worker loop handle finalization
             return
         else:
-            conversion_logger.error(f"FFmpeg conversion failed with return code {rc}")
+            conversion_logger.error(f"❌ Conversion FAILED: FFmpeg return code {rc}, output exists: {output_exists}")
             raise Exception(f"ffmpeg failed (rc={rc})")
     except Exception as e:
         conversion_logger.error(f"Conversion exception: {e}")
@@ -919,19 +1081,27 @@ def conversion_worker_loop():
                 try:
                     # Re-fetch an attached instance to ensure we work with a fresh, attached object
                     job = session.get(ConversionJob, job.id)
-                    conversion_logger.info(f"Starting conversion job {job.id}")
+                    
+                    # Enhanced worker logging
+                    conversion_logger.info(f"🔄 WORKER: Starting conversion job {job.id}")
+                    if job.recording_id:
+                        rec = session.get(Recording, job.recording_id)
+                        if rec:
+                            conversion_logger.info(f"🔄 WORKER: Job {job.id} converting recording {rec.id} ({rec.filename})")
+                    
                     _start_job(job, session)
                     try:
                         _run_ffmpeg_conversion(job, session)
                         _finalize_job(job, session, ok=True, done_text=f"Completed successfully")
+                        conversion_logger.info(f"✅ WORKER: Successfully completed conversion job {job.id}")
                     except Exception as e:
                         _update_job_progress(job, f"Error: {e}", session, force=True)
                         _finalize_job(job, session, ok=False)
+                        conversion_logger.error(f"❌ WORKER: Job {job.id} failed with error: {e}")
                         raise
-                    conversion_logger.info(f"Completed conversion job {job.id}")
                 except Exception as e:
                     app.logger.exception(f"Error processing job {job.id}: {e}")
-                    conversion_logger.error(f"Error processing job {job.id}: {e}")
+                    conversion_logger.error(f"❌ WORKER: Critical error processing job {job.id}: {e}")
                 
             except Exception as e:
                 app.logger.exception("Conversion worker loop error")
@@ -959,13 +1129,20 @@ def get_recording_status(recording):
         return 'deleted'
 
 def is_recording_convertible(recording):
-    """Check if a recording can be converted (completed .ts file exists)"""
+    """Check if a recording can be converted (completed .ts file exists and status is eligible)"""
     if not recording.filename:
+        return False
+    
+    # Only convertible if status indicates a finalized recording
+    if recording.status not in ['completed', 'stopped']:
         return False
     
     download_path = get_download_path()
     ts_path = os.path.join(download_path, f"{recording.filename}.ts")
-    return os.path.exists(ts_path)
+    part_path = os.path.join(download_path, f"{recording.filename}.part")
+    
+    # Must have a .ts file and no .part file (indicates finalized recording)
+    return os.path.exists(ts_path) and not os.path.exists(part_path)
 
 def safe_delete_recording_file(filename):
     """Safely delete recording files (.ts and .part)"""
@@ -1375,52 +1552,47 @@ def record_stream(streamer_id):
                             result = streamlink_manager.run_streamlink(
                                 twitch_user, recorded_filename, stop_event=stop_event, logger=rec_logger
                             )
-
-                        # Robust finalization: prefer what's on disk over the process RC
-                        recording.ended_at = datetime.utcnow()
-                        ts_path = f"{recorded_filename}.ts"
-                        part_path = f"{recorded_filename}.part"
                         
-                        # We prefer what's on disk to the process RC (handles manual/offline kills)
-                        final_ok = _salvage_recording_files(ts_path, part_path)
-                        
-                        if final_ok:
-                            # Check if this was a manual stop (check stop flag)
-                            if recording_stop_flags.get(recording_id) and recording_stop_flags[recording_id].is_set():
-                                recording.status = 'stopped'
-                                recording.status_detail = "Stopped by user"
-                                rec_logger.info(f"Recording stopped by user (file size: {recording.file_size})")
-                            else:
-                                recording.status = 'completed'
-                                recording.status_detail = "Completed successfully"
-                                rec_logger.info(f"Recording completed successfully (file size: {recording.file_size})")
-                            recording.file_size = os.path.getsize(ts_path)
-                        else:
-                            recording.status = 'failed'
-                            recording.status_detail = "No usable file found"
-                            rec_logger.warning("Recording failed - no usable file found")
-                        
-                        if recording.started_at:
-                            recording.duration = int((recording.ended_at - recording.started_at).total_seconds())
-                        db.session.commit()
-                        rec_logger.info(f"Finalize status={recording.status} size={recording.file_size} ts_exists={os.path.exists(ts_path)} part_exists={os.path.exists(part_path)}")
-                        # teardown handlers
-                        try:
-                            sl_logger.removeHandler(fh)
-                            rec_logger.removeHandler(fh)
-                            fh.close()
-                        except Exception:
-                            pass
-                        
-                        message = f"Stream {twitch_user} completed. File saved as {filename}"
-                        logger.info(message)
-                        notifier_manager.notify_all(message)
+                        # BULLETPROOF FINALIZATION - Always runs in try/finally
+                        was_manual_stop = (recording_stop_flags.get(recording_id) and 
+                                         recording_stop_flags[recording_id].is_set())
                         
                     except Exception as e:
-                        recording.status = 'failed'
-                        recording.ended_at = datetime.utcnow()
-                        db.session.commit()
-                        logger.error(f"Recording failed for {twitch_user}: {e}")
+                        logger.exception(f"Recording subprocess failed for {twitch_user}: {e}")
+                        was_manual_stop = False
+                        
+                    finally:
+                        # CRITICAL: Always finalize, no matter what happened above
+                        try:
+                            _bulletproof_finalize_recording(
+                                recording_id=recording_id,
+                                recorded_filename=recorded_filename, 
+                                streamer_id=streamer.id,
+                                rec_logger=rec_logger,
+                                was_manual_stop=was_manual_stop
+                            )
+                            
+                            # teardown handlers
+                            try:
+                                sl_logger.removeHandler(fh)
+                                rec_logger.removeHandler(fh)
+                                fh.close()
+                            except Exception:
+                                pass
+                            
+                            message = f"Stream {twitch_user} completed. File saved as {filename}"
+                            logger.info(message)
+                            notifier_manager.notify_all(message)
+                            
+                        except Exception as cleanup_error:
+                            logger.exception(f"CRITICAL: Finalization failed for recording {recording_id}: {cleanup_error}")
+                            # Even if finalization fails, ensure in-memory cleanup
+                            try:
+                                active_by_streamer.pop(streamer.id, None)
+                                recording_procinfo.pop(recording_id, None)
+                                recording_stop_flags.pop(recording_id, None)
+                            except Exception:
+                                pass
                         
                 elif stream_status == StreamStatus.ERROR:
                     logger.error(f"Error checking status for {twitch_user}")
@@ -1682,8 +1854,14 @@ def get_recordings():
                     db.session.commit()
             
             # For conversion tab, only include convertible recordings
-            if conversion_only and not is_recording_convertible(r):
-                continue
+            if conversion_only:
+                convertible = is_recording_convertible(r)
+                if not convertible:
+                    # Log why recordings aren't convertible for debugging
+                    logger.debug(f"Recording {r.id} ({r.filename}) not convertible: status={r.status}")
+                    continue
+                else:
+                    logger.debug(f"Recording {r.id} ({r.filename}) is convertible: status={r.status}")
             
             streamer = Streamer.query.get(r.streamer_id)
             
@@ -1867,37 +2045,23 @@ def stop_recording(recording_id):
                 logger.warning(f"Recording {recording_id} didn't stop cooperatively, terminating process {proc.pid}")
                 _safe_terminate(proc, timeout=15)
         
-        # Clean up recording info
-        recording_procinfo.pop(recording_id, None)
-        recording_stop_flags.pop(recording_id, None)
+        # Use the same bulletproof finalization as the recording loop
+        # Get streamer_id before finalization
+        streamer_id = recording.streamer_id
+        recorded_filename = os.path.join(get_download_path(), recording.filename)
         
-        # Robust finalization: prefer what's on disk over the process RC
-        recording.ended_at = datetime.utcnow()
-        if recording.started_at:
-            recording.duration = int((recording.ended_at - recording.started_at).total_seconds())
-        ts_path = os.path.join(get_download_path(), f"{recording.filename}.ts")
-        part_path = os.path.join(get_download_path(), f"{recording.filename}.part")
+        # Create a minimal logger for the stop operation
+        stop_logger = logging.getLogger(f"stop.{recording_id}")
+        stop_logger.setLevel(logging.INFO)
         
-        final_ok = _salvage_recording_files(ts_path, part_path)
-        
-        if final_ok:
-            # Check if file is meaningful size (5MB minimum)
-            file_size = os.path.getsize(ts_path)
-            if file_size > 5 * 1024 * 1024:  # 5MB
-                recording.status = 'stopped'   # stopped by user, but file is usable
-                recording.status_detail = "Stopped by user"
-                logger.info(f"Recording {recording_id} stopped by user - file preserved ({file_size} bytes)")
-            else:
-                recording.status = 'failed'    # file too small to be meaningful
-                recording.status_detail = "Stopped by user - file too small"
-                logger.warning(f"Recording {recording_id} stopped by user - file too small ({file_size} bytes)")
-            recording.file_size = file_size
-        else:
-            recording.status = 'failed'      # nothing salvageable
-            recording.status_detail = "Stopped by user - no usable file"
-            logger.warning(f"Recording {recording_id} stopped by user but no usable file found")
-        
-        db.session.commit()
+        # Use the bulletproof finalization (was_manual_stop=True)
+        _bulletproof_finalize_recording(
+            recording_id=recording_id,
+            recorded_filename=recorded_filename,
+            streamer_id=streamer_id,
+            rec_logger=stop_logger,
+            was_manual_stop=True
+        )
         return jsonify({'message': 'Recording stop signaled'})
     except Exception as e:
         logger.error(f"Error stopping recording {recording_id}: {e}")
@@ -2699,6 +2863,24 @@ if __name__ == '__main__':
                 else:
                     logger.error("All database locations failed. Exiting.")
                     exit(1)
+    
+    # Debug breadcrumbs: Log environment and tool versions
+    try:
+        import shutil, subprocess
+        if shutil.which("streamlink"):
+            v = subprocess.check_output(["streamlink", "--version"], text=True).strip()
+            logger.info(f"Detected {v}")
+        else:
+            logger.warning("streamlink command not found in PATH")
+    except Exception as e:
+        logger.warning(f"Could not read streamlink --version: {e}")
+
+    logger.info(f"Resolved DOWNLOAD_PATH={get_download_path()}")
+    logger.info(f"Resolved LOG_DIR={log_dir}")
+    logger.info(f"Python version: {sys.version}")
+    
+    # Validate container path configuration
+    _validate_container_paths()
     
     # Reconcile DB 'recording' rows that have no process
     try:
