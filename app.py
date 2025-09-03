@@ -606,13 +606,17 @@ class AppConfig:
 
 # Global variables for managing recording processes
 recording_processes = {}
-recording_threads = {}
+monitor_threads = {}      # {streamer_id: Thread} - one monitor per streamer
+recording_threads = {}    # {recording_id: Thread} - one worker per active recording
 # Track per-recording stop flags for cooperative cancellation and per-recording PIDs
 recording_stop_flags = {}  # {recording_id: threading.Event()}
 recording_procinfo = {}   # {recording_id: {"pid": int, "proc": Popen, "stop_flag": threading.Event}}
 active_by_streamer = {}   # {streamer_id: recording_id}
 conversion_worker_thread = None
 conversion_wakeup = threading.Event()
+
+# Thread management lock to prevent race conditions
+thread_lock = threading.Lock()
 
 # Track conversion processes for hard-stop fallback
 conversion_processes = {}  # {job_id: {"proc": Popen, "pid": int}}
@@ -1742,9 +1746,11 @@ def add_streamer():
     
     # Start recording thread if active
     if streamer.is_active:
-        thread = threading.Thread(target=record_stream, args=(streamer.id,), daemon=True)
-        thread.start()
-        recording_threads[streamer.id] = thread
+        with thread_lock:
+            if streamer.id not in monitor_threads:
+                thread = threading.Thread(target=record_stream, args=(streamer.id,), daemon=True)
+                thread.start()
+                monitor_threads[streamer.id] = thread
     
     return jsonify({'message': 'Streamer added successfully', 'id': streamer.id}), 201
 
@@ -1771,13 +1777,14 @@ def update_streamer(streamer_id):
     db.session.commit()
     
     # Handle recording thread
-    if streamer.is_active and streamer_id not in recording_threads:
-        thread = threading.Thread(target=record_stream, args=(streamer_id,), daemon=True)
-        thread.start()
-        recording_threads[streamer_id] = thread
-    elif not streamer.is_active and streamer_id in recording_threads:
-        # Note: We can't easily stop the thread, but it will stop on next iteration
-        del recording_threads[streamer_id]
+    with thread_lock:
+        if streamer.is_active and streamer_id not in monitor_threads:
+            thread = threading.Thread(target=record_stream, args=(streamer_id,), daemon=True)
+            thread.start()
+            monitor_threads[streamer_id] = thread
+        elif not streamer.is_active and streamer_id in monitor_threads:
+            # Note: We can't easily stop the thread, but it will stop on next iteration
+            monitor_threads.pop(streamer_id, None)
     
     return jsonify({'message': 'Streamer updated successfully'})
 
@@ -1788,8 +1795,7 @@ def delete_streamer(streamer_id):
     streamer = Streamer.query.get_or_404(streamer_id)
     
     # Stop recording thread
-    if streamer_id in recording_threads:
-        del recording_threads[streamer_id]
+    monitor_threads.pop(streamer_id, None)
     
     db.session.delete(streamer)
     db.session.commit()
@@ -2907,17 +2913,18 @@ if __name__ == '__main__':
         with app.app_context():
             active_streamers = Streamer.query.filter_by(is_active=True).all()
             for streamer in active_streamers:
-                if streamer.id in recording_threads:
-                    continue  # already started
-                t = threading.Thread(
-                    target=record_stream,
-                    args=(streamer.id,),
-                    name=f"record-{streamer.id}",
-                    daemon=True,
-                )
-                t.start()
-                recording_threads[streamer.id] = t
-                logger.info(f"Started monitoring on startup for active streamer {streamer.username} (id={streamer.id})")
+                with thread_lock:
+                    if streamer.id in monitor_threads:
+                        continue  # already started
+                    t = threading.Thread(
+                        target=record_stream,
+                        args=(streamer.id,),
+                        name=f"record-{streamer.id}",
+                        daemon=True,
+                    )
+                    t.start()
+                    monitor_threads[streamer.id] = t
+                    logger.info(f"Started monitoring on startup for active streamer {streamer.username} (id={streamer.id})")
     except Exception as e:
         logger.error(f"Error starting recording threads: {e}")
     
