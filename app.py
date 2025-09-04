@@ -16,6 +16,21 @@ from twitch_manager import TwitchManager, StreamStatus
 from streamlink_manager import StreamlinkManager
 from notification_manager import NotificationManager
 
+# === CONTINUOUS MODE (behave like your stable Streamlink container) ===
+STRICT_CONTINUOUS_MODE = os.getenv("STRICT_CONTINUOUS_MODE", "1") not in ("0", "false", "False")
+OFFLINE_FINALIZE_SECONDS = int(os.getenv("OFFLINE_FINALIZE_SECONDS", "900"))  # 15m sustained offline before finalize (only if proc already died)
+
+# Conservative thresholds (watchdog will not kill on these when STRICT_CONTINUOUS_MODE=True)
+STALL_TIMEOUT_SECONDS = int(os.getenv("STALL_TIMEOUT_SECONDS", "480"))   # 8m no growth = stall signal (log-only in strict mode)
+OFFLINE_CHECK_PERIOD  = int(os.getenv("OFFLINE_CHECK_PERIOD", "15"))     # seconds
+
+# Legacy config (kept for compatibility)
+RESUME_WITHIN_MINUTES = int(os.getenv("RESUME_WITHIN_MINUTES", "5"))     # allow resume within 3–5m
+OFFLINE_GRACE_SECONDS = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))   # require ~5m of offline before finalizing
+
+# Optional: enable streamlink debug logs (much chattier)
+STREAMLINK_DEBUG = os.getenv("STREAMLINK_DEBUG", "0") in ("1","true","True")
+
 # Watchdog helper functions for recording management
 def _safe_terminate(proc: subprocess.Popen, timeout=15):
     """Safely terminate a process with timeout fallback to kill"""
@@ -216,8 +231,8 @@ def _is_twitch_live(username: str) -> bool:
 
 def _watchdog_stop_when_idle_or_offline(
     rec_id, proc, out_path, twitch_name, stop_flag,
-    idle_timeout_secs=STALL_TIMEOUT_SECONDS,
-    check_period_s=OFFLINE_CHECK_PERIOD,
+    idle_timeout_secs=480,  # Default 8 minutes, will be overridden by STALL_TIMEOUT_SECONDS
+    check_period_s=15,      # Default 15 seconds, will be overridden by OFFLINE_CHECK_PERIOD
     max_duration_s=8*3600,
     logger=None, status_callback=None
 ):
@@ -751,18 +766,6 @@ def get_download_path():
     """Get the download path from environment or use default"""
     return os.getenv('DOWNLOAD_PATH', './download')
 
-# === CONTINUOUS MODE (behave like your stable Streamlink container) ===
-STRICT_CONTINUOUS_MODE = os.getenv("STRICT_CONTINUOUS_MODE", "1") not in ("0", "false", "False")
-OFFLINE_FINALIZE_SECONDS = int(os.getenv("OFFLINE_FINALIZE_SECONDS", "900"))  # 15m sustained offline before finalize (only if proc already died)
-
-# Conservative thresholds (watchdog will not kill on these when STRICT_CONTINUOUS_MODE=True)
-STALL_TIMEOUT_SECONDS = int(os.getenv("STALL_TIMEOUT_SECONDS", "480"))   # 8m no growth = stall signal (log-only in strict mode)
-OFFLINE_CHECK_PERIOD  = int(os.getenv("OFFLINE_CHECK_PERIOD", "15"))     # seconds
-
-# Legacy config (kept for compatibility)
-RESUME_WITHIN_MINUTES = int(os.getenv("RESUME_WITHIN_MINUTES", "5"))     # allow resume within 3–5m
-OFFLINE_GRACE_SECONDS = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))   # require ~5m of offline before finalizing
-
 # === PATCH: structured logging & constants ===
 HOSTNAME = socket.gethostname()
 
@@ -785,9 +788,6 @@ def human_bytes(n: int) -> str:
         if n < 1024: return f"{n:.1f}{unit}"
         n /= 1024
     return f"{n:.1f}PB"
-
-# Optional: enable streamlink debug logs (much chattier)
-STREAMLINK_DEBUG = os.getenv("STREAMLINK_DEBUG", "0") in ("1","true","True")
 
 def log_startup_diagnostics():
     """Call once at app boot to capture environment & toolchain."""
