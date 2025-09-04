@@ -215,68 +215,70 @@ def _is_twitch_live(username: str) -> bool:
         return True  # fail-open to avoid flapping on API hiccups
 
 def _watchdog_stop_when_idle_or_offline(
-    rec_id: int,
-    proc: subprocess.Popen,
-    out_path: str,
-    twitch_name: str | None,
-    stop_flag: threading.Event,
-    idle_timeout_secs: int = STALL_TIMEOUT_SECONDS,
-    offline_grace_s: int = OFFLINE_GRACE_SECONDS,
-    max_duration_s: int = 8*3600,
-    logger=None,
-    status_callback=None
+    rec_id, proc, out_path, twitch_name, stop_flag,
+    idle_timeout_secs=STALL_TIMEOUT_SECONDS,
+    check_period_s=OFFLINE_CHECK_PERIOD,
+    max_duration_s=8*3600,
+    logger=None, status_callback=None
 ):
     log = (logger.info if logger else print)
     start_ts = time.time()
     last_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
     last_change_ts = time.time()
-
     consecutive_offline = 0
-    check_period_s = 15
-    offline_checks_required = max(1, offline_grace_s // check_period_s)
 
-    log(f"WATCHDOG: start rec={rec_id} idle={idle_timeout_secs}s offline_grace={offline_grace_s}s max={max_duration_s}s")
+    log(f"WATCHDOG: start rec={rec_id} strict={STRICT_CONTINUOUS_MODE}")
 
     while proc.poll() is None and not (stop_flag and stop_flag.is_set()):
         time.sleep(check_period_s)
 
-        # Size check
+        # growth check
         size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
         if size > last_size:
             last_size = size
             last_change_ts = time.time()
 
         idle_for = time.time() - last_change_ts
-        elapsed = time.time() - start_ts
+        elapsed  = time.time() - start_ts
 
-        # Offline checks (conservative)
+        # conservative "is live" check
+        live = True
         if twitch_name:
             try:
                 live = _is_twitch_live_simple(twitch_name)
-                if live:
-                    consecutive_offline = 0
-                else:
-                    consecutive_offline += 1
             except Exception as e:
-                # Treat API errors as neutral; don't increment
                 log(f"WATCHDOG: is_live error: {e}")
+                live = True  # neutral on API errors
+        consecutive_offline = 0 if live else (consecutive_offline + 1)
 
-        # Enforce max duration
+        # hard stop: user or max duration
+        if stop_flag.is_set():
+            _set_stop_reason(rec_id, "user")
+            _safe_terminate(proc)
+            break
         if elapsed >= max_duration_s:
             _set_stop_reason(rec_id, "max")
             if status_callback: status_callback("Stopped: max duration")
             _safe_terminate(proc)
             break
 
-        # Stall (no growth)
+        # In STRICT mode: DON'T kill on stall/offline — just log.
+        if STRICT_CONTINUOUS_MODE:
+            if idle_for >= idle_timeout_secs:
+                log(f"WATCHDOG: rec={rec_id} idle_for={int(idle_for)}s (strict mode: no terminate)")
+            if not live:
+                log(f"WATCHDOG: rec={rec_id} offline-checks={consecutive_offline} (strict mode: no terminate)")
+            continue
+
+        # Non-strict behavior (if you ever flip it): enforce stall/offline stops
         if idle_for >= idle_timeout_secs:
             _set_stop_reason(rec_id, "stall")
             if status_callback: status_callback("Stopped: no data (stall)")
             _safe_terminate(proc)
             break
 
-        # Sustained offline
-        if consecutive_offline >= offline_checks_required:
+        offline_grace_s = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))
+        if (consecutive_offline * check_period_s) >= offline_grace_s:
             _set_stop_reason(rec_id, "offline")
             if status_callback: status_callback("Stopped: channel offline")
             _safe_terminate(proc)
@@ -726,10 +728,17 @@ def get_download_path():
     """Get the download path from environment or use default"""
     return os.getenv('DOWNLOAD_PATH', './download')
 
-# === PATCH 1/5: Resilience config ===
+# === CONTINUOUS MODE (behave like your stable Streamlink container) ===
+STRICT_CONTINUOUS_MODE = os.getenv("STRICT_CONTINUOUS_MODE", "1") not in ("0", "false", "False")
+OFFLINE_FINALIZE_SECONDS = int(os.getenv("OFFLINE_FINALIZE_SECONDS", "900"))  # 15m sustained offline before finalize (only if proc already died)
+
+# Conservative thresholds (watchdog will not kill on these when STRICT_CONTINUOUS_MODE=True)
+STALL_TIMEOUT_SECONDS = int(os.getenv("STALL_TIMEOUT_SECONDS", "480"))   # 8m no growth = stall signal (log-only in strict mode)
+OFFLINE_CHECK_PERIOD  = int(os.getenv("OFFLINE_CHECK_PERIOD", "15"))     # seconds
+
+# Legacy config (kept for compatibility)
 RESUME_WITHIN_MINUTES = int(os.getenv("RESUME_WITHIN_MINUTES", "5"))     # allow resume within 3–5m
 OFFLINE_GRACE_SECONDS = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))   # require ~5m of offline before finalizing
-STALL_TIMEOUT_SECONDS = int(os.getenv("STALL_TIMEOUT_SECONDS", "480"))   # 8m of no growth = stall
 
 def _validate_container_paths():
     """Validate that container paths are correctly configured to avoid mount issues"""
@@ -1439,141 +1448,130 @@ def start_recording_for_streamer(streamer: Streamer):
 
 
 def record_stream(streamer_id: int):
-    """
-    Start a recording for a streamer; on stall/offline, restart Streamlink inside the
-    same Recording up to RESUME_WITHIN_MINUTES; produce one final .ts via concat.
-    """
     with app.app_context():
         streamer = Streamer.query.get(streamer_id)
         if not streamer:
             logger.error("record_stream: streamer %s not found", streamer_id)
             return
 
-    twitch_user = streamer.twitch_name
-    download_path = ensure_download_directory()
-    # Create DB Recording row once
+    twitch_user  = streamer.twitch_name
+    download_dir = ensure_download_directory()
+
+    # Create ONE Recording row
     with app.app_context():
-        recording = Recording(
+        rec = Recording(
             streamer_id=streamer_id,
             title=streamer.title or "",
             status="recording",
             started_at=datetime.utcnow()
         )
-        db.session.add(recording)
-        db.session.commit()
-        rec_id = recording.id
+        db.session.add(rec); db.session.commit()
+        rec_id = rec.id
 
-    # Bookkeeping
     active_by_streamer[streamer_id] = rec_id
     info = recording_procinfo[rec_id] = {"pid": None, "proc": None}
     stop_flag = recording_stop_flags[rec_id] = threading.Event()
 
-    # Base filename (no extension)
     safe_title = make_safe_filename(streamer.title or "")
-    base = os.path.join(download_path, build_recording_filename(twitch_user, safe_title, when=datetime.utcnow()))
-    parts = []
-    part_idx = 0
+    base = os.path.join(download_dir, build_recording_filename(twitch_user, safe_title, when=datetime.utcnow()))
+    final_ts = f"{base}.ts"
+    parts, part_idx = [], 0
 
     try:
+        # Outer loop restarts ONLY if proc truly exits non-zero (transient)
         while True:
             part_idx += 1
-            ts_part = f"{base}.part{part_idx}.ts"
+            ts_out = final_ts if part_idx == 1 else f"{base}.part{part_idx}.ts"
+
             auth = TwitchAuth.query.first()
-            cmd = build_twitch_cli_cmd(twitch_user, ts_part, auth)
+            cmd  = build_twitch_cli_cmd(twitch_user, ts_out, auth)
+            log_cmd = " ".join(cmd)
+            logger.info("Begin recording rec=%s file=%s", rec_id, ts_out)
+            logger.info("CLI path → %s", log_cmd if not auth or not auth.oauth_token else log_cmd.replace(auth.oauth_token, "****"))
 
-            # Redact & log CLI
-            _cmd_str = " ".join(cmd)
-            logger.info("Begin recording rec=%s file=%s", rec_id, ts_part)
-            logger.info("CLI path → %s", _cmd_str.replace(auth.oauth_token, "****") if auth and auth.oauth_token else _cmd_str)
-
-            # Launch
-            proc_env = os.environ.copy()
+            # Launch Streamlink
             proc = subprocess.Popen(
                 cmd,
-                stdout=open(f"{log_dir}/recording_{rec_id}.log", "a", encoding="utf-8"),
+                stdout=open(os.path.join(log_dir, f"recording_{rec_id}.log"), "a", encoding="utf-8"),
                 stderr=subprocess.STDOUT,
                 text=True,
-                env=proc_env,
+                env=os.environ.copy(),
                 start_new_session=True,
                 close_fds=True,
             )
             info["pid"] = proc.pid
             info["proc"] = proc
 
-            # Update recording with PID
+            # Persist pid
             with app.app_context():
                 r = Recording.query.get(rec_id)
                 if r:
                     r.pid = proc.pid
                     db.session.commit()
 
-            # Start watchdog
+            # Watchdog (STRICT mode will not terminate on stall/offline)
             wd = threading.Thread(
                 target=_watchdog_stop_when_idle_or_offline,
                 kwargs=dict(
-                    rec_id=rec_id,
-                    proc=proc,
-                    out_path=ts_part,
-                    twitch_name=twitch_user,
-                    stop_flag=stop_flag,
-                    idle_timeout_secs=STALL_TIMEOUT_SECONDS,
-                    offline_grace_s=OFFLINE_GRACE_SECONDS,
-                    max_duration_s=8*3600,
-                    logger=logger
+                    rec_id=rec_id, proc=proc, out_path=ts_out, twitch_name=twitch_user,
+                    stop_flag=stop_flag, idle_timeout_secs=STALL_TIMEOUT_SECONDS,
+                    check_period_s=OFFLINE_CHECK_PERIOD, max_duration_s=8*3600, logger=logger
                 ),
                 daemon=True
             )
             wd.start()
+
             rc = proc.wait()
-            # capture reason (if any) and clear it so we don't re-use stale value
             reason = _pop_stop_reason(rec_id)
             logger.info("CLI exit rec=%s rc=%s reason=%s", rec_id, rc, reason)
 
-            # record part existence
-            if os.path.exists(ts_part) and os.path.getsize(ts_part) > 0:
-                parts.append(ts_part)
+            # Track successful part
+            if os.path.exists(ts_out) and os.path.getsize(ts_out) > 0:
+                parts.append(ts_out)
 
-            # Decide: restart or finalize
-            # Priority: user stop / max duration → finalize
+            # User stop or max duration → finalize
             if stop_flag.is_set() and reason == "user":
                 break
             if reason == "max":
                 break
 
-            # If stall/offline/rc!=0 → try to resume within window
-            if reason in ("stall", "offline") or (rc not in (0, None)):
-                deadline = time.time() + RESUME_WITHIN_MINUTES*60
-                resumed = False
-                while time.time() < deadline:
-                    if _is_twitch_live_simple(twitch_user):
-                        resumed = True
-                        logger.info("Resume window: channel is live again; continuing rec=%s with next part", rec_id)
-                        break
-                    time.sleep(5)
-                if resumed:
-                    # loop continues; start next part
-                    continue
-                else:
-                    logger.info("Resume window expired; finalizing rec=%s", rec_id)
+            # rc==0 → natural end of stream → finalize
+            if rc == 0:
+                break
+
+            # rc != 0 → transient error; decide whether to restart or finalize
+            # If channel remains offline for OFFLINE_FINALIZE_SECONDS after proc died → finalize.
+            deadline = time.time() + OFFLINE_FINALIZE_SECONDS
+            while time.time() < deadline:
+                if _is_twitch_live_simple(twitch_user):
+                    logger.info("Proc exited non-zero, channel live again → restarting rec=%s", rec_id)
                     break
+                time.sleep(5)
+            else:
+                logger.info("Proc exited non-zero, channel offline sustained → finalize rec=%s", rec_id)
+                break
 
-            # rc==0 and no stop reason from watchdog → normal end
-            break
+            # loop continues → start next part and keep the SAME recording
 
-        # FINALIZE: concat parts → single .ts and set status
-        final_ts = f"{base}.ts"
-        ok = _concat_parts_to_final(parts, final_ts, logger.info)
-        file_size = os.path.getsize(final_ts) if ok and os.path.exists(final_ts) else 0
+        # FINALIZE
+        ok = True
+        if len(parts) > 1 and not parts[0].endswith(".ts"):
+            # (Safety: in our flow first part already writes to final_ts, so this rarely triggers)
+            ok = _concat_parts_to_final(parts, final_ts, logger.info)
+        else:
+            # If we wrote to final_ts directly on first run, ensure it exists & non-empty
+            ok = os.path.exists(final_ts) and os.path.getsize(final_ts) > 0
 
+        size = os.path.getsize(final_ts) if ok and os.path.exists(final_ts) else 0
         with app.app_context():
             r = Recording.query.get(rec_id)
             if r:
                 r.status = "completed" if ok else "failed"
                 r.status_detail = "OK" if ok else "No output file"
                 r.ended_at = datetime.utcnow()
-                r.file_size = file_size
+                r.file_size = size
                 db.session.commit()
-        logger.info("Ended recording rec=%s status=%s size=%s", rec_id, "completed" if ok else "failed", file_size)
+        logger.info("Ended recording rec=%s status=%s size=%s", rec_id, "completed" if ok else "failed", size)
 
     except Exception as e:
         logger.exception("record_stream exception rec=%s: %s", rec_id, e)
@@ -1585,7 +1583,6 @@ def record_stream(streamer_id: int):
                 r.ended_at = datetime.utcnow()
                 db.session.commit()
     finally:
-        # cleanup maps
         active_by_streamer.pop(streamer_id, None)
         recording_procinfo.pop(rec_id, None)
         recording_stop_flags.pop(rec_id, None)
