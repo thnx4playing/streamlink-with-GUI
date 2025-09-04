@@ -2,7 +2,7 @@
 """
 Streamlink Web GUI - A web interface for managing Twitch stream recordings
 """
-import os, sys, time, json, threading, subprocess, signal, uuid, logging, shutil
+import os, sys, time, json, threading, subprocess, signal, uuid, logging, shutil, socket, getpass
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
@@ -223,68 +223,91 @@ def _watchdog_stop_when_idle_or_offline(
 ):
     log = (logger.info if logger else print)
     start_ts = time.time()
-    last_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
+    last_sz = os.path.getsize(out_path) if os.path.exists(out_path) else 0
     last_change_ts = time.time()
     consecutive_offline = 0
+    samples = 0
 
-    log(f"WATCHDOG: start rec={rec_id} strict={STRICT_CONTINUOUS_MODE}")
+    jlog(logger, "watchdog_start",
+         rec_id=rec_id, path=out_path, strict=STRICT_CONTINUOUS_MODE,
+         idle_timeout_s=idle_timeout_secs, check_period_s=check_period_s,
+         max_duration_s=max_duration_s)
 
     while proc.poll() is None and not (stop_flag and stop_flag.is_set()):
         time.sleep(check_period_s)
+        samples += 1
 
-        # growth check
-        size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
-        if size > last_size:
-            last_size = size
+        # Size / idle tracking
+        sz = os.path.getsize(out_path) if os.path.exists(out_path) else 0
+        if sz > last_sz:
+            last_sz = sz
             last_change_ts = time.time()
+        idle_for = int(time.time() - last_change_ts)
+        elapsed  = int(time.time() - start_ts)
 
-        idle_for = time.time() - last_change_ts
-        elapsed  = time.time() - start_ts
-
-        # conservative "is live" check
+        # Live probe (conservative)
         live = True
         if twitch_name:
             try:
                 live = _is_twitch_live_simple(twitch_name)
             except Exception as e:
                 log(f"WATCHDOG: is_live error: {e}")
-                live = True  # neutral on API errors
+                live = True
         consecutive_offline = 0 if live else (consecutive_offline + 1)
 
-        # hard stop: user or max duration
+        # Periodic health sample (every ~30s)
+        if samples % max(1, int(30 / max(1, check_period_s))) == 0:
+            jlog(logger, "watchdog_sample",
+                 rec_id=rec_id, pid=proc.pid,
+                 file_size_bytes=sz, file_size_h=human_bytes(sz),
+                 idle_s=idle_for, elapsed_s=elapsed,
+                 live=live, offline_streak=consecutive_offline)
+
+        # Hard stops
         if stop_flag.is_set():
             _set_stop_reason(rec_id, "user")
+            jlog(logger, "watchdog_stop", rec_id=rec_id, reason="user",
+                 idle_s=idle_for, elapsed_s=elapsed, offline_streak=consecutive_offline)
             _safe_terminate(proc)
             break
+
         if elapsed >= max_duration_s:
             _set_stop_reason(rec_id, "max")
             if status_callback: status_callback("Stopped: max duration")
+            jlog(logger, "watchdog_stop", rec_id=rec_id, reason="max",
+                 idle_s=idle_for, elapsed_s=elapsed, offline_streak=consecutive_offline)
             _safe_terminate(proc)
             break
 
-        # In STRICT mode: DON'T kill on stall/offline — just log.
+        # Strict mode → never kill on stall/offline; just record evidence
         if STRICT_CONTINUOUS_MODE:
             if idle_for >= idle_timeout_secs:
-                log(f"WATCHDOG: rec={rec_id} idle_for={int(idle_for)}s (strict mode: no terminate)")
+                jlog(logger, "watchdog_notice", rec_id=rec_id, note="idle_threshold_crossed",
+                     idle_s=idle_for, file_size_bytes=sz)
             if not live:
-                log(f"WATCHDOG: rec={rec_id} offline-checks={consecutive_offline} (strict mode: no terminate)")
+                jlog(logger, "watchdog_notice", rec_id=rec_id, note="offline_check",
+                     offline_streak=consecutive_offline)
             continue
 
-        # Non-strict behavior (if you ever flip it): enforce stall/offline stops
+        # Non-strict (optional): enforce stall/offline stops
+        offline_grace_s = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))
         if idle_for >= idle_timeout_secs:
             _set_stop_reason(rec_id, "stall")
             if status_callback: status_callback("Stopped: no data (stall)")
+            jlog(logger, "watchdog_stop", rec_id=rec_id, reason="stall",
+                 idle_s=idle_for, elapsed_s=elapsed, offline_streak=consecutive_offline)
             _safe_terminate(proc)
             break
 
-        offline_grace_s = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))
         if (consecutive_offline * check_period_s) >= offline_grace_s:
             _set_stop_reason(rec_id, "offline")
             if status_callback: status_callback("Stopped: channel offline")
+            jlog(logger, "watchdog_stop", rec_id=rec_id, reason="offline",
+                 idle_s=idle_for, elapsed_s=elapsed, offline_streak=consecutive_offline)
             _safe_terminate(proc)
             break
 
-    log(f"WATCHDOG: end rec={rec_id} reason={_pop_stop_reason(rec_id)}")
+    jlog(logger, "watchdog_end", rec_id=rec_id, reason=_pop_stop_reason(rec_id))
 
 def _salvage_recording_files(ts_path: str, part_path: str) -> bool:
     """
@@ -739,6 +762,55 @@ OFFLINE_CHECK_PERIOD  = int(os.getenv("OFFLINE_CHECK_PERIOD", "15"))     # secon
 # Legacy config (kept for compatibility)
 RESUME_WITHIN_MINUTES = int(os.getenv("RESUME_WITHIN_MINUTES", "5"))     # allow resume within 3–5m
 OFFLINE_GRACE_SECONDS = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))   # require ~5m of offline before finalizing
+
+# === PATCH: structured logging & constants ===
+HOSTNAME = socket.gethostname()
+
+def jlog(logger, event: str, **kv):
+    """Emit a structured JSON log line (single line, easy to grep/parse)."""
+    payload = {
+        "ts": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "host": HOSTNAME,
+        "event": event,
+        **kv
+    }
+    try:
+        logger.info("JLOG %s", json.dumps(payload, ensure_ascii=False))
+    except Exception as e:
+        # fall back
+        logger.info("JLOG %s %s", event, kv)
+
+def human_bytes(n: int) -> str:
+    for unit in ("B","KB","MB","GB","TB"):
+        if n < 1024: return f"{n:.1f}{unit}"
+        n /= 1024
+    return f"{n:.1f}PB"
+
+# Optional: enable streamlink debug logs (much chattier)
+STREAMLINK_DEBUG = os.getenv("STREAMLINK_DEBUG", "0") in ("1","true","True")
+
+def log_startup_diagnostics():
+    """Call once at app boot to capture environment & toolchain."""
+    try:
+        import subprocess
+        sl_ver = subprocess.check_output(["streamlink","--version"], text=True).strip() if shutil.which("streamlink") else "missing"
+    except Exception as e:
+        sl_ver = f"error:{e}"
+    ffmpeg = shutil.which("ffmpeg") or "missing"
+    uid_gid = f"{os.getuid()}:{os.getgid()}" if hasattr(os, "getuid") else getpass.getuser()
+    jlog(logger, "startup",
+        streamlink_version=sl_ver,
+        ffmpeg=ffmpeg,
+        python=os.sys.version.split()[0],
+        uid_gid=uid_gid,
+        download_path=get_download_path(),
+        converted_path=get_converted_path(),
+        strict_continuous_mode=STRICT_CONTINUOUS_MODE,
+        stall_timeout_s=STALL_TIMEOUT_SECONDS,
+        offline_check_period_s=OFFLINE_CHECK_PERIOD,
+        offline_finalize_s=OFFLINE_FINALIZE_SECONDS,
+        streamlink_debug=STREAMLINK_DEBUG
+    )
 
 def _validate_container_paths():
     """Validate that container paths are correctly configured to avoid mount issues"""
@@ -1269,7 +1341,8 @@ def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
       • Version-safe retry/timeout flags
       • Never include unsupported flags (we also sanitize Extra Flags)
     """
-    cmd = ["streamlink", "--loglevel", "info"]
+    cmd = ["streamlink"]
+    cmd += ["--loglevel", "debug" if STREAMLINK_DEBUG else "info"]
 
     # Auth (per Streamlink Twitch plugin docs)
     if auth:
@@ -1502,6 +1575,8 @@ def record_stream(streamer_id: int):
             info["pid"] = proc.pid
             info["proc"] = proc
 
+            jlog(logger, "proc_start", rec_id=rec_id, pid=proc.pid, out=ts_out)
+
             # Persist pid
             with app.app_context():
                 r = Recording.query.get(rec_id)
@@ -1525,18 +1600,23 @@ def record_stream(streamer_id: int):
             reason = _pop_stop_reason(rec_id)
             logger.info("CLI exit rec=%s rc=%s reason=%s", rec_id, rc, reason)
 
+            jlog(logger, "proc_exit", rec_id=rec_id, pid=proc.pid, rc=rc, reason=reason)
+
             # Track successful part
             if os.path.exists(ts_out) and os.path.getsize(ts_out) > 0:
                 parts.append(ts_out)
 
             # User stop or max duration → finalize
             if stop_flag.is_set() and reason == "user":
+                jlog(logger, "decision_finalize", rec_id=rec_id, parts=len(parts))
                 break
             if reason == "max":
+                jlog(logger, "decision_finalize", rec_id=rec_id, parts=len(parts))
                 break
 
             # rc==0 → natural end of stream → finalize
             if rc == 0:
+                jlog(logger, "decision_finalize", rec_id=rec_id, parts=len(parts))
                 break
 
             # rc != 0 → transient error; decide whether to restart or finalize
@@ -1545,10 +1625,12 @@ def record_stream(streamer_id: int):
             while time.time() < deadline:
                 if _is_twitch_live_simple(twitch_user):
                     logger.info("Proc exited non-zero, channel live again → restarting rec=%s", rec_id)
+                    jlog(logger, "decision_restart", rec_id=rec_id, next_part=part_idx+1)
                     break
                 time.sleep(5)
             else:
                 logger.info("Proc exited non-zero, channel offline sustained → finalize rec=%s", rec_id)
+                jlog(logger, "decision_finalize", rec_id=rec_id, parts=len(parts))
                 break
 
             # loop continues → start next part and keep the SAME recording
@@ -1557,7 +1639,10 @@ def record_stream(streamer_id: int):
         ok = True
         if len(parts) > 1 and not parts[0].endswith(".ts"):
             # (Safety: in our flow first part already writes to final_ts, so this rarely triggers)
+            jlog(logger, "concat_start", rec_id=rec_id, parts=len(parts))
             ok = _concat_parts_to_final(parts, final_ts, logger.info)
+            jlog(logger, "concat_done", rec_id=rec_id, ok=bool(ok), final=final_ts,
+                 size_bytes=(os.path.getsize(final_ts) if ok and os.path.exists(final_ts) else 0))
         else:
             # If we wrote to final_ts directly on first run, ensure it exists & non-empty
             ok = os.path.exists(final_ts) and os.path.getsize(final_ts) > 0
@@ -1573,6 +1658,8 @@ def record_stream(streamer_id: int):
                 db.session.commit()
         logger.info("Ended recording rec=%s status=%s size=%s", rec_id, "completed" if ok else "failed", size)
 
+        jlog(logger, "recording_commit", rec_id=rec_id, status=("completed" if ok else "failed"))
+
     except Exception as e:
         logger.exception("record_stream exception rec=%s: %s", rec_id, e)
         with app.app_context():
@@ -1586,6 +1673,7 @@ def record_stream(streamer_id: int):
         active_by_streamer.pop(streamer_id, None)
         recording_procinfo.pop(rec_id, None)
         recording_stop_flags.pop(rec_id, None)
+        jlog(logger, "recording_cleanup", rec_id=rec_id)
 
 # Routes
 @app.route('/')
@@ -2920,6 +3008,9 @@ if __name__ == '__main__':
     
     # Get port from environment or use non-standard port
     port = int(os.getenv('PORT', 8080))
+    
+    # Log startup diagnostics
+    log_startup_diagnostics()
     
     # Run the Flask app
     app.run(host='0.0.0.0', port=port, debug=False)
