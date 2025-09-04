@@ -2,7 +2,7 @@
 """
 Streamlink Web GUI - A web interface for managing Twitch stream recordings
 """
-import os, sys, time, json, threading, subprocess, signal, uuid, logging
+import os, sys, time, json, threading, subprocess, signal, uuid, logging, shutil
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
@@ -35,6 +35,85 @@ def _file_size(path):
         return os.path.getsize(path)
     except Exception:
         return -1
+
+# === PATCH 2/5: Helpers ===
+_stop_reason = {}  # recording_id -> reason string
+_stop_reason_lock = threading.Lock()
+
+def _set_stop_reason(rec_id: int, reason: str):
+    with _stop_reason_lock:
+        _stop_reason[rec_id] = reason
+
+def _pop_stop_reason(rec_id: int) -> str | None:
+    with _stop_reason_lock:
+        return _stop_reason.pop(rec_id, None)
+
+def _is_twitch_live_simple(twitch_user: str) -> bool:
+    """Lightweight 'is live' check; tolerate API errors."""
+    try:
+        user = twitch_manager.get_from_twitch('get_users', logins=twitch_user)
+        if not user:
+            return False
+        stream = twitch_manager.get_from_twitch('get_streams', user_id=user.id)
+        return bool(stream and getattr(stream, "type", "") == "live")
+    except Exception as e:
+        logger.warning("is_live check failed for %s: %s", twitch_user, e)
+        return False
+
+def _concat_parts_to_final(parts: list[str], final_ts: str, log):
+    """Concatenate .ts part files into one final .ts. Prefer ffmpeg; fallback to binary concat."""
+    parts = [p for p in parts if p and os.path.exists(p) and os.path.getsize(p) > 0]
+    if not parts:
+        log("No parts to concatenate.")
+        return False
+    if len(parts) == 1:
+        # Single part → just move/rename
+        try:
+            os.replace(parts[0], final_ts)
+            return os.path.exists(final_ts) and os.path.getsize(final_ts) > 0
+        finally:
+            for p in parts:
+                if p != final_ts:
+                    try: os.remove(p)
+                    except: pass
+
+    listfile = final_ts + ".parts.txt"
+    with open(listfile, "w", encoding="utf-8") as f:
+        for p in parts:
+            escaped_path = p.replace("'", "'\\''")
+            f.write(f"file '{escaped_path}'\n")
+
+    ok = False
+    if shutil.which("ffmpeg"):
+        r = subprocess.run(
+            ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "concat", "-safe", "0", "-i", listfile, "-c", "copy", final_ts]
+        )
+        ok = (r.returncode == 0 and os.path.exists(final_ts) and os.path.getsize(final_ts) > 0)
+    if not ok:
+        # Fallback: binary concat (works well for MPEG-TS)
+        with open(final_ts, "wb") as out:
+            for p in parts:
+                with open(p, "rb") as inp:
+                    shutil.copyfileobj(inp, out)
+        ok = os.path.exists(final_ts) and os.path.getsize(final_ts) > 0
+
+    try: os.remove(listfile)
+    except: pass
+    # Cleanup parts
+    for p in parts:
+        try: os.remove(p)
+        except: pass
+    return ok
+
+def make_safe_filename(title: str) -> str:
+    """Create a safe filename from a title"""
+    return "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+
+def build_recording_filename(twitch_user: str, safe_title: str, when: datetime) -> str:
+    """Build recording filename with timestamp"""
+    timestamp = when.strftime('%Y-%m-%d %H-%M-%S')
+    return f"{twitch_user} - {timestamp} - {safe_title}"
 
 def start_recording_watchdog(*, proc, out_path, twitch_name=None,
                              offline_check_fn=None,
@@ -137,99 +216,73 @@ def _is_twitch_live(username: str) -> bool:
 
 def _watchdog_stop_when_idle_or_offline(
     rec_id: int,
-    path_ts: str,
     proc: subprocess.Popen,
-    twitch_mgr: "TwitchManager",
-    twitch_name: str,
-    poll_secs: int = 15,
-    idle_timeout_secs: int = 480,   # 8 minutes of no growth (increased from 4)
-    offline_grace_checks: int = 5,  # require 5 consecutive "offline" checks (increased from 3)
-    max_duration_hours: int = 8,    # Maximum recording duration in hours
-) -> None:
-    """Cooperative watchdog: stops the recording when Twitch is offline and
-    the TS file has not grown for a while. Works even if streamlink hangs."""
-    last_size = 0
-    last_growth_ts = time.time()
+    out_path: str,
+    twitch_name: str | None,
+    stop_flag: threading.Event,
+    idle_timeout_secs: int = STALL_TIMEOUT_SECONDS,
+    offline_grace_s: int = OFFLINE_GRACE_SECONDS,
+    max_duration_s: int = 8*3600,
+    logger=None,
+    status_callback=None
+):
+    log = (logger.info if logger else print)
+    start_ts = time.time()
+    last_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
+    last_change_ts = time.time()
+
     consecutive_offline = 0
-    consecutive_errors = 0
-    start_time = time.time()
+    check_period_s = 15
+    offline_checks_required = max(1, offline_grace_s // check_period_s)
 
-    logger.info(f"WATCHDOG: Started for recording {rec_id} - idle_timeout={idle_timeout_secs}s, offline_grace={offline_grace_checks}, max_duration={max_duration_hours}h")
+    log(f"WATCHDOG: start rec={rec_id} idle={idle_timeout_secs}s offline_grace={offline_grace_s}s max={max_duration_s}s")
 
-    flag = recording_stop_flags.get(rec_id)
-    while proc.poll() is None and not (flag and flag.is_set()):
-        try:
-            # 1) Check maximum duration (safety net)
-            elapsed_hours = (time.time() - start_time) / 3600
-            if elapsed_hours >= max_duration_hours:
-                logger.warning(f"WATCHDOG: Recording {rec_id} hit maximum duration {max_duration_hours}h, stopping")
-                recording_stop_flags[rec_id].set()
-                break
+    while proc.poll() is None and not (stop_flag and stop_flag.is_set()):
+        time.sleep(check_period_s)
 
-            # 2) File growth check with double-verification
-            if os.path.exists(path_ts):
-                sz = os.path.getsize(path_ts)
-                if sz > last_size:
-                    last_size = sz
-                    last_growth_ts = time.time()
-                    logger.debug(f"WATCHDOG: Recording {rec_id} file grew to {sz} bytes")
+        # Size check
+        size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
+        if size > last_size:
+            last_size = size
+            last_change_ts = time.time()
 
-            idle_for = time.time() - last_growth_ts
+        idle_for = time.time() - last_change_ts
+        elapsed = time.time() - start_ts
 
-            # 3) Twitch status check (guard errors — don't crash watchdog)
-            is_offline = False
+        # Offline checks (conservative)
+        if twitch_name:
             try:
-                status, _title = twitch_mgr.check_user(twitch_name)
-                is_offline = (status == StreamStatus.OFFLINE)
-                consecutive_errors = 0  # Reset error counter on successful API call
-                
-                if is_offline:
-                    logger.debug(f"WATCHDOG: Recording {rec_id} detected offline ({consecutive_offline + 1}/{offline_grace_checks})")
+                live = _is_twitch_live_simple(twitch_name)
+                if live:
+                    consecutive_offline = 0
                 else:
-                    if consecutive_offline > 0:
-                        logger.debug(f"WATCHDOG: Recording {rec_id} back online, resetting offline counter")
+                    consecutive_offline += 1
             except Exception as e:
-                consecutive_errors += 1
-                logger.warning(f"WATCHDOG: Error checking Twitch status for {twitch_name} (error #{consecutive_errors}): {e}")
-                
-                # Treat repeated API errors as offline to avoid endless waits
-                if consecutive_errors >= 3:  # After 3 consecutive API failures, treat as offline
-                    logger.warning(f"WATCHDOG: Recording {rec_id} treating repeated API errors as offline (error #{consecutive_errors})")
-                    is_offline = True
-                else:
-                    is_offline = False  # Fail-open for first few errors
+                # Treat API errors as neutral; don't increment
+                log(f"WATCHDOG: is_live error: {e}")
 
-            consecutive_offline = (consecutive_offline + 1) if is_offline else 0
+        # Enforce max duration
+        if elapsed >= max_duration_s:
+            _set_stop_reason(rec_id, "max")
+            if status_callback: status_callback("Stopped: max duration")
+            _safe_terminate(proc)
+            break
 
-            # 4) Stall detection with double-check for transient pauses
-            if idle_for >= idle_timeout_secs and consecutive_offline >= offline_grace_checks:
-                # Double-check file size after a short wait to avoid false positives
-                time.sleep(5)
-                if os.path.exists(path_ts):
-                    new_sz = os.path.getsize(path_ts)
-                    if new_sz > last_size:
-                        # File grew during our check, reset the timer
-                        last_size = new_sz
-                        last_growth_ts = time.time()
-                        logger.info(f"WATCHDOG: Recording {rec_id} file grew during stall check, continuing")
-                        time.sleep(poll_secs - 5)  # Adjust sleep since we already waited 5s
-                        continue
+        # Stall (no growth)
+        if idle_for >= idle_timeout_secs:
+            _set_stop_reason(rec_id, "stall")
+            if status_callback: status_callback("Stopped: no data (stall)")
+            _safe_terminate(proc)
+            break
 
-                logger.info(f"WATCHDOG: Recording {rec_id} stopping - offline for {consecutive_offline} consecutive checks and stalled for {idle_for:.0f}s")
-                recording_stop_flags[rec_id].set()
-                break
+        # Sustained offline
+        if consecutive_offline >= offline_checks_required:
+            _set_stop_reason(rec_id, "offline")
+            if status_callback: status_callback("Stopped: channel offline")
+            _safe_terminate(proc)
+            break
 
-            time.sleep(poll_secs)
-        except Exception as e:
-            # Never let watchdog crash; just keep going
-            logger.warning(f"WATCHDOG: Error in watchdog for recording {rec_id}: {e}")
-            time.sleep(poll_secs)
-            continue
-
-    # If process is still alive but we decided to stop, ask it to terminate
-    if proc.poll() is None and recording_stop_flags.get(rec_id) and recording_stop_flags[rec_id].is_set():
-        logger.info(f"WATCHDOG: Terminating process for recording {rec_id}")
-        _safe_terminate(proc, timeout=15)  # Increased timeout
+    log(f"WATCHDOG: end rec={rec_id} reason={_pop_stop_reason(rec_id)}")
 
 def _salvage_recording_files(ts_path: str, part_path: str) -> bool:
     """
@@ -672,6 +725,11 @@ def ensure_database_migrated():
 def get_download_path():
     """Get the download path from environment or use default"""
     return os.getenv('DOWNLOAD_PATH', './download')
+
+# === PATCH 1/5: Resilience config ===
+RESUME_WITHIN_MINUTES = int(os.getenv("RESUME_WITHIN_MINUTES", "5"))     # allow resume within 3–5m
+OFFLINE_GRACE_SECONDS = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))   # require ~5m of offline before finalizing
+STALL_TIMEOUT_SECONDS = int(os.getenv("STALL_TIMEOUT_SECONDS", "480"))   # 8m of no growth = stall
 
 def _validate_container_paths():
     """Validate that container paths are correctly configured to avoid mount issues"""
@@ -1213,14 +1271,14 @@ def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
         if auth.client_id:
             cmd += ["--http-header", f"Client-ID={auth.client_id}"]
 
-    # Version-safe stability flags for 7.1.3+ (sane retry limits to prevent hanging)
+    # Make Streamlink itself more resilient
     cmd += [
-        "--retry-open", "3",
-        "--retry-streams", "3",
-        "--stream-timeout", "30",         # reduced from 60s to 30s
-        "--stream-segment-timeout", "15", # reduced from 20s to 15s
-        "--hls-live-edge", "3",
-        "--ringbuffer-size", "16M",
+        "--retry-open", "999999",
+        "--retry-streams", "999999",
+        "--stream-segment-attempts", "10",
+        "--stream-segment-timeout", "20",
+        "--hls-segment-threads", "1",
+        "--twitch-disable-ads",
     ]
     
     # Conditionally add --hls-live-restart if enabled (can cause indefinite reconnection)
@@ -1245,8 +1303,8 @@ def build_twitch_cli_cmd(username: str, ts_out_path: str, auth: 'TwitchAuth'):
         if safe:
             cmd += safe
 
-    # URL, quality, output
-    cmd += [f"https://twitch.tv/{username}", "best", "-o", f"{ts_out_path}.ts"]
+    # Quality + output
+    cmd += [f"https://twitch.tv/{username}", "best", "-o", ts_out_path]
     return cmd
 
 def looks_like_twitch(streamer) -> bool:
@@ -1380,234 +1438,157 @@ def start_recording_for_streamer(streamer: Streamer):
 
 
 
-def record_stream(streamer_id):
-    """Background function to record a stream"""
+def record_stream(streamer_id: int):
+    """
+    Start a recording for a streamer; on stall/offline, restart Streamlink inside the
+    same Recording up to RESUME_WITHIN_MINUTES; produce one final .ts via concat.
+    """
     with app.app_context():
         streamer = Streamer.query.get(streamer_id)
         if not streamer:
-            logger.error(f"record_stream: streamer {streamer_id} not found")
+            logger.error("record_stream: streamer %s not found", streamer_id)
             return
-        
-        notifier_manager = NotificationManager(AppConfig(streamer))
-        download_path = ensure_download_directory()
-        
+
+    twitch_user = streamer.twitch_name
+    download_path = ensure_download_directory()
+    # Create DB Recording row once
+    with app.app_context():
+        recording = Recording(
+            streamer_id=streamer_id,
+            title=streamer.title or "",
+            status="recording",
+            started_at=datetime.utcnow()
+        )
+        db.session.add(recording)
+        db.session.commit()
+        rec_id = recording.id
+
+    # Bookkeeping
+    active_by_streamer[streamer_id] = rec_id
+    info = recording_procinfo[rec_id] = {"pid": None, "proc": None}
+    stop_flag = recording_stop_flags[rec_id] = threading.Event()
+
+    # Base filename (no extension)
+    safe_title = make_safe_filename(streamer.title or "")
+    base = os.path.join(download_path, build_recording_filename(twitch_user, safe_title, when=datetime.utcnow()))
+    parts = []
+    part_idx = 0
+
+    try:
         while True:
-            # Always refresh the DB row first
-            streamer = Streamer.query.get(streamer_id)
-            if not streamer or not streamer.is_active:
-                logger.info(f"[record] streamer {streamer_id} deactivated; stopping monitor")
-                break
-            
-            # REBUILD managers each tick so edits take effect
-            try:
-                config = AppConfig(streamer)
-                twitch_manager = TwitchManager(config)
-                streamlink_manager = StreamlinkManager(config)
+            part_idx += 1
+            ts_part = f"{base}.part{part_idx}.ts"
+            auth = TwitchAuth.query.first()
+            cmd = build_twitch_cli_cmd(twitch_user, ts_part, auth)
 
-                # Use the fresh twitch_name from DB (not a cached user value)
-                twitch_user = streamer.twitch_name
-                stream_status, title = twitch_manager.check_user(twitch_user)
-                
-                if stream_status == StreamStatus.ONLINE and streamer_id not in active_by_streamer:
-                    # Get additional stream info including game
-                    try:
-                        user_info = twitch_manager.get_from_twitch('get_users', logins=twitch_user)
-                        if user_info:
-                            stream_info = twitch_manager.get_from_twitch('get_streams', user_id=user_info.id)
-                            game_name = ""
-                            if stream_info and stream_info.game_id:
-                                game_info = twitch_manager.get_from_twitch('get_games', game_ids=[stream_info.game_id])
-                                if game_info:
-                                    game_name = game_info.name
-                    except Exception as e:
-                        logger.error(f"Error getting game info for {twitch_user}: {e}")
-                        game_name = ""
-                    
-                    # Create safe filename
-                    safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
-                    filename = f"{twitch_user} - {timestamp} - {safe_title}"
-                    recorded_filename = os.path.join(download_path, filename)
-                    
-                    # Create recording record
-                    recording = Recording(
-                        streamer_id=streamer_id,
-                        filename=filename,
-                        title=title,
-                        game=game_name,
-                        status='recording'
-                    )
-                    db.session.add(recording)
+            # Redact & log CLI
+            _cmd_str = " ".join(cmd)
+            logger.info("Begin recording rec=%s file=%s", rec_id, ts_part)
+            logger.info("CLI path → %s", _cmd_str.replace(auth.oauth_token, "****") if auth and auth.oauth_token else _cmd_str)
+
+            # Launch
+            proc_env = os.environ.copy()
+            proc = subprocess.Popen(
+                cmd,
+                stdout=open(f"{log_dir}/recording_{rec_id}.log", "a", encoding="utf-8"),
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=proc_env,
+                start_new_session=True,
+                close_fds=True,
+            )
+            info["pid"] = proc.pid
+            info["proc"] = proc
+
+            # Update recording with PID
+            with app.app_context():
+                r = Recording.query.get(rec_id)
+                if r:
+                    r.pid = proc.pid
                     db.session.commit()
-                    
-                    # Get recording ID before removing session
-                    recording_id = recording.id
-                    
-                    # Free connection before long-running external operations
-                    try:
-                        db.session.remove()
-                    except Exception as ce:
-                        logger.warning(f"record_stream: session cleanup after create failed: {ce}")
-                    
-                    # Send notification
-                    message = f"Recording {twitch_user} - {title}"
-                    notifier_manager.notify_all(message)
-                    logger.info(message)
-                    
-                    # Start recording
-                    try:
-                        # per-recording logger file
-                        os.makedirs(log_dir, exist_ok=True)
-                        rec_log_path = f"{log_dir}/recording_{recording_id}.log"
-                        _fmt = logging.Formatter("%(asctime)s [%(levelname)s] rec-%(name)s: %(message)s")
-                        fh = logging.FileHandler(rec_log_path, encoding="utf-8")
-                        fh.setFormatter(_fmt)
-                        rec_logger = logging.getLogger(f"rec.{recording_id}")
-                        rec_logger.setLevel(logging.INFO)
-                        rec_logger.addHandler(fh)
-                        # also pipe streamlink's own logs
-                        sl_logger = logging.getLogger("streamlink")
-                        sl_logger.setLevel(logging.INFO)
-                        sl_logger.addHandler(fh)
-                        rec_logger.info(f"Begin recording streamer={twitch_user} id={recording_id} file={recorded_filename}")
 
-                        # cooperative stop flag
-                        stop_event = threading.Event()
-                        recording_stop_flags[recording_id] = stop_event
+            # Start watchdog
+            wd = threading.Thread(
+                target=_watchdog_stop_when_idle_or_offline,
+                kwargs=dict(
+                    rec_id=rec_id,
+                    proc=proc,
+                    out_path=ts_part,
+                    twitch_name=twitch_user,
+                    stop_flag=stop_flag,
+                    idle_timeout_secs=STALL_TIMEOUT_SECONDS,
+                    offline_grace_s=OFFLINE_GRACE_SECONDS,
+                    max_duration_s=8*3600,
+                    logger=logger
+                ),
+                daemon=True
+            )
+            wd.start()
+            rc = proc.wait()
+            # capture reason (if any) and clear it so we don't re-use stale value
+            reason = _pop_stop_reason(rec_id)
+            logger.info("CLI exit rec=%s rc=%s reason=%s", rec_id, rc, reason)
 
-                        # Get fresh streamer and auth objects after session removal
-                        with app.app_context():
-                            streamer = Streamer.query.get(streamer_id)
-                            auth = TwitchAuth.query.first()
-                        
-                        use_cli = looks_like_twitch(streamer)
-                        if use_cli:
-                            # Build CLI and launch subprocess; capture stdout to per-recording file
-                            cmd = build_twitch_cli_cmd(streamer.twitch_name, recorded_filename, auth)
-                            rec_logger.info("CLI path → %s", " ".join(cmd))
-                            proc_env = os.environ.copy()
-                            if auth:
-                                proc_env["STREAMLINK_TWITCH_CLIENT_ID"] = (auth.client_id or "")
-                                proc_env["STREAMLINK_TWITCH_AUTH_TOKEN"] = _normalize_twitch_token(auth.oauth_token or "")
-                            info = {"pid": None, "proc": None, "stop_flag": stop_event}
-                            recording_procinfo[recording_id] = info
-                            active_by_streamer[streamer.id] = recording_id
-                            proc = subprocess.Popen(
-                                cmd,
-                                stdout=open(f"{log_dir}/recording_{recording.id}.log", "a", encoding="utf-8"),
-                                stderr=subprocess.STDOUT,
-                                text=True,
-                                env=proc_env,
-                                start_new_session=True,  # Ensure signals work reliably
-                                close_fds=True  # Avoid file-descriptor leaks under heavy churn
-                            )
-                            info["pid"] = proc.pid
-                            info["proc"] = proc
-                            
-                            # Update recording PID in database
-                            with app.app_context():
-                                recording = Recording.query.get(recording_id)
-                                if recording:
-                                    recording.pid = proc.pid
-                                    db.session.commit()
-                            # Free connection before long-running external operations
-                            try:
-                                db.session.remove()
-                            except Exception as ce:
-                                logger.warning(f"record_stream: session cleanup after pid commit failed: {ce}")
-                            
-                            # Start watchdog to prevent indefinite hanging
-                            ts_out_path = f"{recorded_filename}.ts"
-                            
-                            # Get watchdog settings from database
-                            conv_settings = ConversionSettings.query.first()
-                            if not conv_settings:
-                                conv_settings = ConversionSettings()
-                                db.session.add(conv_settings)
-                                db.session.commit()
-                            
-                            # Create status callback for watchdog
-                            def set_status_detail(detail):
-                                try:
-                                    with app.app_context():
-                                        recording = Recording.query.get(recording_id)
-                                        if recording:
-                                            recording.status_detail = detail
-                                            db.session.commit()
-                                except Exception as e:
-                                    rec_logger.error(f"Failed to set status detail: {e}")
-                            
-                            # Start the robust watchdog
-                            watchdog_thread = threading.Thread(
-                                target=_watchdog_stop_when_idle_or_offline,
-                                args=(recording_id, ts_out_path, proc, twitch_manager, twitch_user),
-                                daemon=True,
-                                name=f"watchdog-{recording_id}"
-                            )
-                            watchdog_thread.start()
-                            rec_logger.info(f"Started watchdog for recording {recording_id}")
-                            
-                            rc = proc.wait()
-                            rec_logger.info("CLI exited rc=%s", rc)
-                            # mimic library-result shape for status logic below
-                            result = {"stopped_by_user": False}
-                        else:
-                            # Fallback: Python library path
-                            result = streamlink_manager.run_streamlink(
-                                twitch_user, recorded_filename, stop_event=stop_event, logger=rec_logger
-                            )
-                        
-                        # BULLETPROOF FINALIZATION - Always runs in try/finally
-                        was_manual_stop = (recording_stop_flags.get(recording_id) and 
-                                         recording_stop_flags[recording_id].is_set())
-                        
-                    except Exception as e:
-                        logger.exception(f"Recording subprocess failed for {twitch_user}: {e}")
-                        was_manual_stop = False
-                        
-                    finally:
-                        # CRITICAL: Always finalize, no matter what happened above
-                        try:
-                            _bulletproof_finalize_recording(
-                                recording_id=recording_id,
-                                recorded_filename=recorded_filename, 
-                                streamer_id=streamer.id,
-                                rec_logger=rec_logger,
-                                was_manual_stop=was_manual_stop
-                            )
-                            
-                            # teardown handlers
-                            try:
-                                sl_logger.removeHandler(fh)
-                                rec_logger.removeHandler(fh)
-                                fh.close()
-                            except Exception:
-                                pass
-                            
-                            message = f"Stream {twitch_user} completed. File saved as {filename}"
-                            logger.info(message)
-                            notifier_manager.notify_all(message)
-                            
-                        except Exception as cleanup_error:
-                            logger.exception(f"CRITICAL: Finalization failed for recording {recording_id}: {cleanup_error}")
-                            # Even if finalization fails, ensure in-memory cleanup
-                            try:
-                                active_by_streamer.pop(streamer.id, None)
-                                recording_procinfo.pop(recording_id, None)
-                                recording_stop_flags.pop(recording_id, None)
-                            except Exception:
-                                pass
-                        
-                elif stream_status == StreamStatus.ERROR:
-                    logger.error(f"Error checking status for {twitch_user}")
+            # record part existence
+            if os.path.exists(ts_part) and os.path.getsize(ts_part) > 0:
+                parts.append(ts_part)
+
+            # Decide: restart or finalize
+            # Priority: user stop / max duration → finalize
+            if stop_flag.is_set() and reason == "user":
+                break
+            if reason == "max":
+                break
+
+            # If stall/offline/rc!=0 → try to resume within window
+            if reason in ("stall", "offline") or (rc not in (0, None)):
+                deadline = time.time() + RESUME_WITHIN_MINUTES*60
+                resumed = False
+                while time.time() < deadline:
+                    if _is_twitch_live_simple(twitch_user):
+                        resumed = True
+                        logger.info("Resume window: channel is live again; continuing rec=%s with next part", rec_id)
+                        break
+                    time.sleep(5)
+                if resumed:
+                    # loop continues; start next part
+                    continue
                 else:
-                    logger.debug(f"[record] {streamer.username} offline (status={stream_status}); recheck later")
-                    
-            except Exception as e:
-                logger.exception(f"[record] loop error for streamer {streamer_id}: {e}")
-            
-            # sleep based on current (possibly updated) timer
-            time.sleep(max(5, int(streamer.timer or 60)))
+                    logger.info("Resume window expired; finalizing rec=%s", rec_id)
+                    break
+
+            # rc==0 and no stop reason from watchdog → normal end
+            break
+
+        # FINALIZE: concat parts → single .ts and set status
+        final_ts = f"{base}.ts"
+        ok = _concat_parts_to_final(parts, final_ts, logger.info)
+        file_size = os.path.getsize(final_ts) if ok and os.path.exists(final_ts) else 0
+
+        with app.app_context():
+            r = Recording.query.get(rec_id)
+            if r:
+                r.status = "completed" if ok else "failed"
+                r.status_detail = "OK" if ok else "No output file"
+                r.ended_at = datetime.utcnow()
+                r.file_size = file_size
+                db.session.commit()
+        logger.info("Ended recording rec=%s status=%s size=%s", rec_id, "completed" if ok else "failed", file_size)
+
+    except Exception as e:
+        logger.exception("record_stream exception rec=%s: %s", rec_id, e)
+        with app.app_context():
+            r = Recording.query.get(rec_id)
+            if r:
+                r.status = "failed"
+                r.status_detail = str(e)
+                r.ended_at = datetime.utcnow()
+                db.session.commit()
+    finally:
+        # cleanup maps
+        active_by_streamer.pop(streamer_id, None)
+        recording_procinfo.pop(rec_id, None)
+        recording_stop_flags.pop(rec_id, None)
 
 # Routes
 @app.route('/')
