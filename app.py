@@ -2548,21 +2548,6 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Error reconciling stale recordings: {e}")
 
-    # Start recordings for existing active streamers using new recording manager
-    try:
-        with app.app_context():
-            recording_manager = get_recording_manager()
-            active_streamers = Streamer.query.filter_by(is_active=True).all()
-            for streamer in active_streamers:
-                if not recording_manager.is_streamer_recording(streamer.id):
-                    recording_id = recording_manager.start_recording(streamer.id)
-                    if recording_id:
-                        logger.info(f"Started recording {recording_id} for active streamer {streamer.username} (id={streamer.id})")
-                    else:
-                        logger.warning(f"Failed to start recording for active streamer {streamer.username} (id={streamer.id})")
-    except Exception as e:
-        logger.error(f"Error starting recordings for active streamers: {e}")
-    
     # Start conversion worker once
     if not conversion_worker_thread or not conversion_worker_thread.is_alive():
         conversion_worker_thread = threading.Thread(target=conversion_worker_loop, name="conv-worker", daemon=True)
