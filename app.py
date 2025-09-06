@@ -2064,6 +2064,57 @@ def test_recording_worker(streamer_id):
             'error_type': type(e).__name__
         })
 
+@app.route('/api/debug/test-streamlink-variations/<streamer_name>')
+def test_streamlink_variations(streamer_name):
+    """Test different streamlink command variations"""
+    
+    variations = {
+        'basic': [
+            'streamlink', 
+            f'https://twitch.tv/{streamer_name}', 
+            'best', 
+            '--player', 'echo'
+        ],
+        'with_auth': [
+            'streamlink',
+            '--twitch-disable-ads',
+            f'https://twitch.tv/{streamer_name}',
+            'best',
+            '--player', 'echo'
+        ],
+        'minimal_record': [
+            'streamlink',
+            '--twitch-disable-ads',
+            f'https://twitch.tv/{streamer_name}',
+            'best',
+            '-o', f'/tmp/test_{streamer_name}_minimal.ts'
+        ]
+    }
+    
+    results = {}
+    
+    for name, cmd in variations.items():
+        try:
+            result = subprocess.run(
+                cmd, 
+                capture_output=True, 
+                text=True, 
+                timeout=30,
+                cwd='/tmp'
+            )
+            results[name] = {
+                'success': result.returncode == 0,
+                'returncode': result.returncode,
+                'stdout': result.stdout[:500],  # First 500 chars
+                'stderr': result.stderr[:500]   # First 500 chars
+            }
+        except subprocess.TimeoutExpired:
+            results[name] = {'error': 'timeout'}
+        except Exception as e:
+            results[name] = {'error': str(e)}
+    
+    return jsonify(results)
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
