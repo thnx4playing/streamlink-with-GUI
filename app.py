@@ -1623,6 +1623,90 @@ def test_streamlink():
     except Exception as e:
         return jsonify({'error': str(e), 'error_type': type(e).__name__})
 
+@app.route('/api/debug/recording-manager-deep/<int:streamer_id>', methods=['POST'])
+def debug_recording_manager_deep(streamer_id):
+    """Deep dive into recording manager internals"""
+    try:
+        from recording_manager import get_recording_manager
+        
+        streamer = Streamer.query.get_or_404(streamer_id)
+        recording_manager = get_recording_manager()
+        
+        result = {
+            'streamer': {
+                'id': streamer.id,
+                'username': streamer.username,
+                'twitch_name': streamer.twitch_name,
+                'is_active': streamer.is_active
+            },
+            'recording_manager_state': {},
+            'step_by_step': {}
+        }
+        
+        # Check if already recording
+        is_recording = recording_manager.is_streamer_recording(streamer_id)
+        result['recording_manager_state']['is_already_recording'] = is_recording
+        
+        if is_recording:
+            result['step_by_step']['reason'] = 'already_recording'
+            return jsonify(result)
+        
+        # Check Twitch status
+        try:
+            config = AppConfig(streamer)
+            twitch_manager = TwitchManager(config)
+            status, title = twitch_manager.check_user(streamer.twitch_name)
+            result['step_by_step']['twitch_status'] = status.name if status else 'ERROR'
+            result['step_by_step']['twitch_title'] = title
+        except Exception as e:
+            result['step_by_step']['twitch_error'] = str(e)
+            return jsonify(result)
+        
+        # Check if streamer is online
+        if status != StreamStatus.ONLINE:
+            result['step_by_step']['reason'] = f'streamer_not_online_{status.name if status else "ERROR"}'
+            return jsonify(result)
+        
+        # Try to start recording with detailed logging
+        try:
+            # Check internal state before starting
+            active_recordings = recording_manager.get_active_recordings()
+            result['recording_manager_state']['active_recordings_before'] = len(active_recordings)
+            
+            # Attempt to start recording
+            recording_id = recording_manager.start_recording(streamer_id)
+            result['step_by_step']['recording_id_returned'] = recording_id
+            
+            # Check internal state after starting
+            active_recordings_after = recording_manager.get_active_recordings()
+            result['recording_manager_state']['active_recordings_after'] = len(active_recordings_after)
+            
+            # Check database for new recording
+            if recording_id:
+                db_recording = Recording.query.get(recording_id)
+                if db_recording:
+                    result['step_by_step']['db_recording_created'] = True
+                    result['step_by_step']['db_recording_status'] = db_recording.status
+                else:
+                    result['step_by_step']['db_recording_created'] = False
+                    result['step_by_step']['db_recording_error'] = 'Recording ID returned but not found in database'
+            else:
+                result['step_by_step']['reason'] = 'start_recording_returned_none'
+                
+        except Exception as e:
+            result['step_by_step']['exception'] = {
+                'error_message': str(e),
+                'error_type': type(e).__name__
+            }
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
