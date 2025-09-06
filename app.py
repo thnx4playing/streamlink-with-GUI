@@ -442,6 +442,24 @@ def ensure_database_migrated():
                         conn.execute(db.text("ALTER TABLE conversion_settings ADD COLUMN watchdog_max_duration_s INTEGER DEFAULT 28800"))
                     logger.info(f"Added {col} column to conversion_settings table")
             
+            # Check streamer table for new monitoring fields
+            result = conn.execute(db.text("PRAGMA table_info(streamer)"))
+            streamer_columns = [row[1] for row in result.fetchall()]
+            
+            streamer_missing_columns = []
+            if 'title' not in streamer_columns:
+                streamer_missing_columns.append('title')
+            if 'game' not in streamer_columns:
+                streamer_missing_columns.append('game')
+            
+            for col in streamer_missing_columns:
+                if col == 'title':
+                    conn.execute(db.text("ALTER TABLE streamer ADD COLUMN title VARCHAR(255)"))
+                    logger.info("Added title column to streamer table")
+                elif col == 'game':
+                    conn.execute(db.text("ALTER TABLE streamer ADD COLUMN game VARCHAR(255)"))
+                    logger.info("Added game column to streamer table")
+            
             conn.commit()
             logger.info("Database migration check completed")
             
