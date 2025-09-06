@@ -2,7 +2,7 @@
 """
 Streamlink Web GUI - A web interface for managing Twitch stream recordings
 """
-import os, sys, time, json, threading, subprocess, signal, uuid, logging, shutil, socket, getpass
+import os, sys, time, json, threading, subprocess, signal, uuid, logging, shutil, socket, getpass, atexit
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, request, jsonify, redirect, url_for, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
@@ -16,6 +16,7 @@ from twitch_manager import TwitchManager, StreamStatus
 from streamlink_manager import StreamlinkManager
 from notification_manager import NotificationManager
 from recording_manager import init_recording_manager, get_recording_manager, RecordingState
+from stream_monitor import init_stream_monitor, get_stream_monitor
 
 # === CONTINUOUS MODE (behave like your stable Streamlink container) ===
 STRICT_CONTINUOUS_MODE = os.getenv("STRICT_CONTINUOUS_MODE", "1") not in ("0", "false", "False")
@@ -315,6 +316,9 @@ class Streamer(db.Model):
     is_active = db.Column(db.Boolean, default=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Add these for monitoring
+    title = db.Column(db.String(255))  # Current stream title
+    game = db.Column(db.String(255))   # Current game being played
 
 class Recording(db.Model):
     __table_args__ = (
@@ -1252,10 +1256,13 @@ def add_streamer():
     db.session.add(streamer)
     db.session.commit()
     
-    # Start recording if active (simplified)
+    # Start monitoring if active
     if streamer.is_active:
-        recording_manager = get_recording_manager()
-        recording_manager.start_recording(streamer.id)
+        try:
+            monitor = get_stream_monitor()
+            monitor.start_monitoring(streamer.id)
+        except Exception as e:
+            logger.error(f"Error starting monitoring for streamer {streamer.id}: {e}")
     
     return jsonify({'message': 'Streamer added successfully', 'id': streamer.id}), 201
 
@@ -1278,30 +1285,30 @@ def update_streamer(streamer_id):
     if 'is_active' in data:
         streamer.is_active = data['is_active']
     
+    # Store old active state
+    was_active = streamer.is_active
+    
     streamer.updated_at = datetime.utcnow()
     db.session.commit()
     
-    # Handle recording using new recording manager
+    # Handle monitoring state changes
     try:
+        monitor = get_stream_monitor()
         recording_manager = get_recording_manager()
-        if streamer.is_active:
-            # Start recording if not already recording
-            if not recording_manager.is_streamer_recording(streamer_id):
-                recording_id = recording_manager.start_recording(streamer_id)
-                if recording_id:
-                    logger.info(f"Started recording {recording_id} for streamer {streamer_id}")
-                else:
-                    logger.warning(f"Failed to start recording for streamer {streamer_id}")
-        else:
-            # Stop recording if active
-            if recording_manager.is_streamer_recording(streamer_id):
-                success = recording_manager.stop_recording_by_streamer(streamer_id)
-                if success:
-                    logger.info(f"Stopped recording for streamer {streamer_id}")
-                else:
-                    logger.warning(f"Failed to stop recording for streamer {streamer_id}")
+        
+        if was_active and not streamer.is_active:
+            # Stop monitoring and recording if deactivated
+            monitor.stop_monitoring(streamer_id)
+            recording_manager.stop_recording_by_streamer(streamer_id)
+        elif not was_active and streamer.is_active:
+            # Start monitoring if activated
+            monitor.start_monitoring(streamer_id)
+        elif streamer.is_active:
+            # Restart monitoring if timer changed (optional optimization)
+            monitor.stop_monitoring(streamer_id)
+            monitor.start_monitoring(streamer_id)
     except Exception as e:
-        logger.error(f"Error handling recording for streamer {streamer_id}: {e}")
+        logger.error(f"Error handling monitoring for streamer {streamer_id}: {e}")
     
     return jsonify({'message': 'Streamer updated successfully'})
 
@@ -1311,19 +1318,55 @@ def delete_streamer(streamer_id):
     """API endpoint to delete a streamer"""
     streamer = Streamer.query.get_or_404(streamer_id)
     
-    # Stop recording using new recording manager
+    # Stop monitoring and any active recording
     try:
+        monitor = get_stream_monitor()
         recording_manager = get_recording_manager()
-        if recording_manager.is_streamer_recording(streamer_id):
-            recording_manager.stop_recording_by_streamer(streamer_id)
-            logger.info(f"Stopped recording for streamer {streamer_id} before deletion")
+        
+        monitor.stop_monitoring(streamer_id)
+        recording_manager.stop_recording_by_streamer(streamer_id)
+        
+        logger.info(f"Stopped monitoring and recording for streamer {streamer_id} before deletion")
     except Exception as e:
-        logger.error(f"Error stopping recording for streamer {streamer_id}: {e}")
+        logger.error(f"Error stopping monitoring/recording for streamer {streamer_id}: {e}")
     
     db.session.delete(streamer)
     db.session.commit()
     
     return jsonify({'message': 'Streamer deleted successfully'})
+
+@app.route('/api/monitoring-status')
+@cleanup_session
+def get_monitoring_status():
+    """API endpoint to get monitoring status for all streamers"""
+    try:
+        monitor = get_stream_monitor()
+        status = monitor.get_monitoring_status()
+        
+        return jsonify({
+            'monitoring_status': status,
+            'total_monitored': len([s for s in status.values() if s])
+        })
+    except Exception as e:
+        logger.error(f"Error getting monitoring status: {e}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/streamers/<int:streamer_id>/force-record', methods=['POST'])
+@cleanup_session  
+def force_record_streamer(streamer_id):
+    """Force start recording for a streamer (for testing)"""
+    try:
+        recording_manager = get_recording_manager()
+        recording_id = recording_manager.start_recording(streamer_id)
+        
+        if recording_id:
+            return jsonify({'message': f'Recording {recording_id} started', 'recording_id': recording_id})
+        else:
+            return jsonify({'error': 'Failed to start recording or already recording'}), 400
+            
+    except Exception as e:
+        logger.error(f"Error force starting recording for streamer {streamer_id}: {e}")
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
@@ -1365,7 +1408,13 @@ def get_recordings():
         recordings_data = []
         for r in recordings.items:
             # Only adjust if not deleted and no live process is tracked
-            if r.status != 'deleted' and not recording_procinfo.get(r.id):
+            try:
+                recording_manager = get_recording_manager()
+                is_recording = recording_manager.is_recording_active(r.id)
+            except:
+                is_recording = False
+            
+            if r.status != 'deleted' and not is_recording:
                 ts_path, part_path = _recording_paths(r)
                 ts_exists = os.path.exists(ts_path)
                 part_exists = os.path.exists(part_path)
@@ -2387,6 +2436,15 @@ if __name__ == '__main__':
         logger.error(f"Failed to initialize recording manager: {e}")
         exit(1)
     
+    # Initialize stream monitor
+    try:
+        with app.app_context():
+            stream_monitor = init_stream_monitor(app, db, recording_manager)
+            logger.info("Stream monitor initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize stream monitor: {e}")
+        exit(1)
+    
     # Debug breadcrumbs: Log environment and tool versions
     try:
         import shutil, subprocess
@@ -2452,11 +2510,30 @@ if __name__ == '__main__':
         template_scheduler_thread.start()
         logger.info("Template scheduler thread started")
     
+    # Start monitoring for existing active streamers
+    try:
+        with app.app_context():
+            stream_monitor.start_monitoring_all_active()
+            logger.info("Started monitoring all active streamers")
+    except Exception as e:
+        logger.error(f"Error starting stream monitoring on startup: {e}")
+    
     # Get port from environment or use non-standard port
     port = int(os.getenv('PORT', 8080))
     
     # Log startup diagnostics
     log_startup_diagnostics()
+    
+    # Add cleanup on shutdown
+    def cleanup():
+        try:
+            recording_manager.shutdown()
+            stream_monitor.shutdown()
+            logger.info("Cleanup completed on shutdown")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+    
+    atexit.register(cleanup)
     
     # Run the Flask app
     app.run(host='0.0.0.0', port=port, debug=False)
