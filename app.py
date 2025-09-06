@@ -2013,6 +2013,57 @@ def test_streamlink_command(streamer_name):
     except Exception as e:
         return jsonify({'error': str(e)})
 
+@app.route('/api/debug/test-recording-worker/<int:streamer_id>', methods=['POST'])
+def test_recording_worker(streamer_id):
+    """Test the recording worker directly and capture errors"""
+    try:
+        from recording_manager import get_recording_manager
+        
+        recording_manager = get_recording_manager()
+        streamer = Streamer.query.get(streamer_id)
+        
+        if not streamer:
+            return jsonify({'error': 'Streamer not found'})
+        
+        # Create a minimal RecordingInfo for testing
+        from recording_manager import RecordingInfo, RecordingState
+        import threading
+        from datetime import datetime
+        
+        info = RecordingInfo(
+            id=999,  # Test ID
+            streamer_id=streamer_id,
+            state=RecordingState.STARTING,
+            started_at=datetime.utcnow(),
+            stop_event=threading.Event(),
+            filename=f"test-{streamer.twitch_name}-debug"
+        )
+        
+        # Capture output by calling the worker method directly
+        try:
+            with recording_manager.app.app_context():
+                recording_manager._run_recording(info)
+            return jsonify({
+                'result': 'success',
+                'final_state': info.state.value,
+                'error_message': info.error_message
+            })
+        except Exception as worker_error:
+            return jsonify({
+                'result': 'worker_exception',
+                'error': str(worker_error),
+                'error_type': type(worker_error).__name__,
+                'final_state': info.state.value if hasattr(info, 'state') else 'unknown',
+                'error_message': info.error_message if hasattr(info, 'error_message') else 'none'
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'result': 'setup_exception',
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
