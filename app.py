@@ -1433,6 +1433,105 @@ def test_monitor():
             'error_type': type(e).__name__
         })
 
+@app.route('/api/debug/monitor-detail/<int:streamer_id>')
+def debug_monitor_detail(streamer_id):
+    """Debug what the monitor is seeing for a specific streamer"""
+    try:
+        from recording_manager import get_recording_manager
+        from stream_monitor import get_stream_monitor
+        
+        # Get streamer info
+        streamer = Streamer.query.get_or_404(streamer_id)
+        
+        # Test Twitch API directly
+        config = AppConfig(streamer)
+        twitch_manager = TwitchManager(config)
+        status, title = twitch_manager.check_user(streamer.twitch_name)
+        
+        # Check recording manager state
+        recording_manager = get_recording_manager()
+        is_recording = recording_manager.is_streamer_recording(streamer_id)
+        active_recordings = recording_manager.get_active_recordings()
+        
+        # Check for existing recordings in database
+        db_recordings = Recording.query.filter_by(
+            streamer_id=streamer_id,
+            status='recording'
+        ).all()
+        
+        return jsonify({
+            'streamer': {
+                'id': streamer.id,
+                'username': streamer.username,
+                'twitch_name': streamer.twitch_name,
+                'is_active': streamer.is_active,
+                'timer': streamer.timer
+            },
+            'twitch_status': {
+                'status': status.name if status else 'ERROR',
+                'title': title,
+                'is_online': status.name == 'ONLINE' if status else False
+            },
+            'recording_state': {
+                'is_recording_per_manager': is_recording,
+                'active_recordings_count': len(active_recordings),
+                'db_recordings_count': len(db_recordings),
+                'db_recordings': [{'id': r.id, 'status': r.status, 'started_at': r.started_at.isoformat()} for r in db_recordings]
+            },
+            'config': {
+                'has_client_id': bool(config.client_id),
+                'has_client_secret': bool(config.client_secret),
+                'has_oauth_token': bool(config.oauth_token)
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
+@app.route('/api/debug/force-check/<int:streamer_id>', methods=['POST'])
+def force_check_streamer(streamer_id):
+    """Manually trigger the monitoring logic for a streamer"""
+    try:
+        from recording_manager import get_recording_manager
+        
+        streamer = Streamer.query.get_or_404(streamer_id)
+        
+        # Check Twitch status
+        config = AppConfig(streamer)
+        twitch_manager = TwitchManager(config)
+        status, title = twitch_manager.check_user(streamer.twitch_name)
+        
+        result = {
+            'streamer': streamer.twitch_name,
+            'status': status.name if status else 'ERROR',
+            'title': title,
+            'action_taken': 'none'
+        }
+        
+        if status == StreamStatus.ONLINE:
+            # Try to start recording
+            recording_manager = get_recording_manager()
+            
+            if not recording_manager.is_streamer_recording(streamer_id):
+                recording_id = recording_manager.start_recording(streamer_id)
+                if recording_id:
+                    result['action_taken'] = f'started_recording_{recording_id}'
+                else:
+                    result['action_taken'] = 'failed_to_start_recording'
+            else:
+                result['action_taken'] = 'already_recording'
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
