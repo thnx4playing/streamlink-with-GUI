@@ -1789,6 +1789,116 @@ def debug_recording_manager_detail(streamer_id):
             'error_type': type(e).__name__
         })
 
+@app.route('/api/debug/step-by-step-recording/<int:streamer_id>', methods=['POST'])
+def debug_step_by_step_recording(streamer_id):
+    """Debug each step of the recording process"""
+    try:
+        from recording_manager import get_recording_manager
+        
+        recording_manager = get_recording_manager()
+        streamer = Streamer.query.get(streamer_id)
+        
+        steps = []
+        
+        # Step 1: Check lock acquisition
+        steps.append("Step 1: Acquiring lock...")
+        with recording_manager._lock:
+            steps.append("Step 1: ✅ Lock acquired")
+            
+            # Step 2: Check if already recording
+            steps.append("Step 2: Checking if already recording...")
+            if streamer_id in recording_manager._streamer_recordings:
+                existing_id = recording_manager._streamer_recordings[streamer_id]
+                existing_info = recording_manager._recordings.get(existing_id)
+                if existing_info and not recording_manager._is_recording_stale(existing_info):
+                    steps.append(f"Step 2: ❌ Already recording (ID: {existing_id})")
+                    return jsonify({'steps': steps, 'result': 'already_recording'})
+                else:
+                    steps.append(f"Step 2: 🧹 Cleaning up stale recording (ID: {existing_id})")
+                    recording_manager._cleanup_recording_unsafe(existing_id)
+            
+            steps.append("Step 2: ✅ No active recording found")
+            
+            # Step 3: Create recording in database
+            steps.append("Step 3: Creating database record...")
+            try:
+                with recording_manager.app.app_context():
+                    recording = Recording(
+                        streamer_id=streamer_id,
+                        filename=recording_manager._make_filename(streamer),
+                        title="",
+                        status='recording',
+                        started_at=datetime.utcnow()
+                    )
+                    recording_manager.db.session.add(recording)
+                    recording_manager.db.session.commit()
+                    recording_id = recording.id
+                    steps.append(f"Step 3: ✅ Database record created (ID: {recording_id})")
+            except Exception as e:
+                steps.append(f"Step 3: ❌ Database error: {str(e)}")
+                return jsonify({'steps': steps, 'result': 'database_error', 'error': str(e)})
+            
+            # Step 4: Create RecordingInfo object
+            steps.append("Step 4: Creating RecordingInfo object...")
+            try:
+                from recording_manager import RecordingInfo, RecordingState
+                info = RecordingInfo(
+                    id=recording_id,
+                    streamer_id=streamer_id,
+                    state=RecordingState.STARTING,
+                    started_at=datetime.utcnow(),
+                    stop_event=threading.Event(),
+                    filename=recording.filename
+                )
+                steps.append("Step 4: ✅ RecordingInfo created")
+            except Exception as e:
+                steps.append(f"Step 4: ❌ RecordingInfo error: {str(e)}")
+                return jsonify({'steps': steps, 'result': 'recording_info_error', 'error': str(e)})
+            
+            # Step 5: Create and start thread
+            steps.append("Step 5: Creating recording thread...")
+            try:
+                thread = threading.Thread(
+                    target=recording_manager._recording_worker,
+                    args=(info,),
+                    name=f"recording-{recording_id}",
+                    daemon=True
+                )
+                info.thread = thread
+                steps.append("Step 5: ✅ Thread created")
+            except Exception as e:
+                steps.append(f"Step 5: ❌ Thread creation error: {str(e)}")
+                return jsonify({'steps': steps, 'result': 'thread_error', 'error': str(e)})
+            
+            # Step 6: Register recording
+            steps.append("Step 6: Registering recording...")
+            try:
+                recording_manager._recordings[recording_id] = info
+                recording_manager._streamer_recordings[streamer_id] = recording_id
+                steps.append("Step 6: ✅ Recording registered")
+            except Exception as e:
+                steps.append(f"Step 6: ❌ Registration error: {str(e)}")
+                return jsonify({'steps': steps, 'result': 'registration_error', 'error': str(e)})
+            
+            # Step 7: Start thread
+            steps.append("Step 7: Starting thread...")
+            try:
+                thread.start()
+                steps.append("Step 7: ✅ Thread started")
+                steps.append(f"Step 8: ✅ SUCCESS - Recording {recording_id} started")
+                return jsonify({'steps': steps, 'result': 'success', 'recording_id': recording_id})
+            except Exception as e:
+                steps.append(f"Step 7: ❌ Thread start error: {str(e)}")
+                return jsonify({'steps': steps, 'result': 'thread_start_error', 'error': str(e)})
+        
+    except Exception as e:
+        return jsonify({
+            'steps': steps + [f"💥 Unexpected error: {str(e)}"],
+            'result': 'unexpected_error',
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
