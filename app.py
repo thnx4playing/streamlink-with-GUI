@@ -1707,6 +1707,88 @@ def debug_recording_manager_deep(streamer_id):
             'error_type': type(e).__name__
         })
 
+@app.route('/api/debug/recording-manager-detail/<int:streamer_id>', methods=['POST'])
+def debug_recording_manager_detail(streamer_id):
+    """Debug the recording manager's internal logic"""
+    try:
+        from recording_manager import get_recording_manager
+        
+        recording_manager = get_recording_manager()
+        
+        # Check if already recording (this might be the issue)
+        is_already_recording = recording_manager.is_streamer_recording(streamer_id)
+        
+        # Check internal state
+        with recording_manager._lock:
+            active_recordings = dict(recording_manager._recordings)
+            streamer_recordings = dict(recording_manager._streamer_recordings)
+        
+        # Check database state
+        streamer = Streamer.query.get(streamer_id)
+        db_active_recordings = Recording.query.filter_by(
+            streamer_id=streamer_id,
+            status='recording'
+        ).all()
+        
+        result = {
+            'streamer_id': streamer_id,
+            'manager_state': {
+                'is_already_recording': is_already_recording,
+                'active_recordings_count': len(active_recordings),
+                'active_recordings': {k: {'state': v.state.value, 'filename': v.filename} for k, v in active_recordings.items()},
+                'streamer_recordings': streamer_recordings
+            },
+            'database_state': {
+                'active_db_recordings': len(db_active_recordings),
+                'recordings': [{'id': r.id, 'status': r.status, 'filename': r.filename} for r in db_active_recordings]
+            },
+            'streamer_exists': streamer is not None
+        }
+        
+        # Try the recording logic step by step
+        if not is_already_recording and streamer:
+            try:
+                # Create a test recording in the database
+                test_recording = Recording(
+                    streamer_id=streamer_id,
+                    filename=f"test-{streamer.twitch_name}-{datetime.now().strftime('%Y%m%d-%H%M%S')}",
+                    title="Test Recording",
+                    status='recording',
+                    started_at=datetime.utcnow()
+                )
+                
+                # Don't commit yet, just test creation
+                db.session.add(test_recording)
+                db.session.flush()  # Get the ID without committing
+                
+                result['test_recording'] = {
+                    'can_create_recording': True,
+                    'test_recording_id': test_recording.id
+                }
+                
+                # Rollback the test
+                db.session.rollback()
+                
+            except Exception as e:
+                result['test_recording'] = {
+                    'can_create_recording': False,
+                    'error': str(e)
+                }
+                db.session.rollback()
+        else:
+            result['test_recording'] = {
+                'skipped': True,
+                'reason': 'already_recording' if is_already_recording else 'no_streamer'
+            }
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
