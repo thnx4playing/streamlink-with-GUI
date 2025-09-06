@@ -418,42 +418,29 @@ class RecordingManager:
         return f"{streamer.twitch_name} - {timestamp}"
     
     def _build_streamlink_cmd(self, streamer, output_path: str, auth) -> list:
-        """Build streamlink command"""
+        """Build streamlink command (simplified)"""
         cmd = ["streamlink"]
         cmd += ["--loglevel", "info"]
         
-        # Auth
-        if auth:
-            if auth.oauth_token:
-                token = auth.oauth_token.strip()
-                if token.lower().startswith("oauth:"):
-                    token = token.split(":", 1)[1].strip()
-                if token.lower().startswith("oauth "):
-                    token = token.split(" ", 1)[1].strip()
-                
-                cmd += [f"--twitch-api-header=Authorization=OAuth {token}"]
-                cmd += ["--http-cookie", f"auth-token={token}"]
+        # Add basic auth if available (but it's optional)
+        if auth and auth.oauth_token:
+            token = auth.oauth_token.strip()
+            if token.lower().startswith("oauth:"):
+                token = token.split(":", 1)[1].strip()
+            if token.lower().startswith("oauth "):
+                token = token.split(" ", 1)[1].strip()
             
-            if auth.client_id:
-                cmd += ["--http-header", f"Client-ID={auth.client_id}"]
+            cmd += [f"--twitch-api-header=Authorization=OAuth {token}"]
+            cmd += ["--http-cookie", f"auth-token={token}"]
         
-        # Reliability options
+        if auth and auth.client_id:
+            cmd += ["--http-header", f"Client-ID={auth.client_id}"]
+        
+        # Simplified reliability options (remove problematic flags)
         cmd += [
-            "--retry-open", "999999",
-            "--retry-streams", "999999", 
-            "--stream-segment-attempts", "10",
-            "--stream-segment-timeout", "20",
-            "--hls-segment-threads", "1",
-            "--twitch-disable-ads"
+            "--retry-streams", "5",  # Reduced from 999999
+            "--stream-segment-attempts", "3"  # Reduced from 10
         ]
-        
-        # Extra flags
-        if auth and auth.extra_flags:
-            # Parse and add extra flags safely
-            parts = auth.extra_flags.strip().split()
-            for part in parts:
-                if part and not part.startswith("--retry-delay"):  # Skip problematic flags
-                    cmd.append(part)
         
         # Stream URL and quality
         cmd += [f"https://twitch.tv/{streamer.twitch_name}", streamer.quality, "-o", output_path]
