@@ -1386,6 +1386,53 @@ def force_record_streamer(streamer_id):
         logger.error(f"Error force starting recording for streamer {streamer_id}: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/debug/test-monitor')
+def test_monitor():
+    """Test if monitoring components are working"""
+    try:
+        # Test if modules can be imported
+        from recording_manager import get_recording_manager
+        from stream_monitor import get_stream_monitor
+        
+        # Test if they're initialized
+        recording_manager = get_recording_manager()
+        stream_monitor = get_stream_monitor()
+        
+        # Get current state
+        active_recordings = recording_manager.get_active_recordings()
+        monitoring_status = stream_monitor.get_monitoring_status()
+        
+        # Test manual start of monitoring
+        with app.app_context():
+            streamers = Streamer.query.filter_by(is_active=True).all()
+            for streamer in streamers:
+                stream_monitor.start_monitoring(streamer.id)
+        
+        return jsonify({
+            'success': True,
+            'active_recordings': len(active_recordings),
+            'monitoring_threads_before': len(monitoring_status),
+            'active_streamers_in_db': len(streamers),
+            'manually_started_monitoring': True,
+            'streamers': [{'id': s.id, 'name': s.username, 'twitch': s.twitch_name} for s in streamers]
+        })
+        
+    except ImportError as e:
+        return jsonify({
+            'error': f'Import error: {str(e)}',
+            'error_type': 'ImportError'
+        })
+    except RuntimeError as e:
+        return jsonify({
+            'error': f'Runtime error: {str(e)}',
+            'error_type': 'RuntimeError' 
+        })
+    except Exception as e:
+        return jsonify({
+            'error': f'Unexpected error: {str(e)}',
+            'error_type': type(e).__name__
+        })
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
