@@ -1899,6 +1899,60 @@ def debug_step_by_step_recording(streamer_id):
             'error_type': type(e).__name__
         })
 
+@app.route('/api/debug/recording-status/<int:recording_id>')
+def debug_recording_status(recording_id):
+    """Check status of a specific recording"""
+    try:
+        from recording_manager import get_recording_manager
+        
+        recording_manager = get_recording_manager()
+        
+        # Check database
+        recording = Recording.query.get(recording_id)
+        
+        # Check recording manager tracking
+        with recording_manager._lock:
+            is_tracked = recording_id in recording_manager._recordings
+            tracking_info = recording_manager._recordings.get(recording_id)
+            
+        # Check file system
+        if recording:
+            download_path = get_download_path()
+            ts_path = os.path.join(download_path, f"{recording.filename}.ts")
+            part_path = os.path.join(download_path, f"{recording.filename}.part")
+            
+            file_info = {
+                'ts_exists': os.path.exists(ts_path),
+                'ts_size': os.path.getsize(ts_path) if os.path.exists(ts_path) else 0,
+                'part_exists': os.path.exists(part_path),
+                'part_size': os.path.getsize(part_path) if os.path.exists(part_path) else 0
+            }
+        else:
+            file_info = {'error': 'recording not found in database'}
+        
+        return jsonify({
+            'recording_id': recording_id,
+            'database': {
+                'exists': recording is not None,
+                'status': recording.status if recording else None,
+                'filename': recording.filename if recording else None,
+                'started_at': recording.started_at.isoformat() if recording and recording.started_at else None,
+                'pid': recording.pid if recording else None
+            },
+            'tracking': {
+                'is_tracked': is_tracked,
+                'state': tracking_info.state.value if tracking_info else None,
+                'thread_alive': tracking_info.thread.is_alive() if tracking_info and tracking_info.thread else None
+            },
+            'files': file_info
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
