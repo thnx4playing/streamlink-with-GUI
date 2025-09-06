@@ -1532,6 +1532,97 @@ def force_check_streamer(streamer_id):
             'error_type': type(e).__name__
         })
 
+@app.route('/api/debug/recording-error/<int:streamer_id>', methods=['POST'])
+def debug_recording_error(streamer_id):
+    """Debug why recording fails to start"""
+    try:
+        from recording_manager import get_recording_manager
+        
+        streamer = Streamer.query.get_or_404(streamer_id)
+        recording_manager = get_recording_manager()
+        
+        # Check prerequisites
+        download_path = get_download_path()
+        
+        result = {
+            'streamer': {
+                'id': streamer.id,
+                'username': streamer.username,
+                'twitch_name': streamer.twitch_name
+            },
+            'prerequisites': {
+                'download_path': download_path,
+                'download_path_exists': os.path.exists(download_path),
+                'download_path_writable': os.access(download_path, os.W_OK) if os.path.exists(download_path) else False,
+                'streamlink_available': bool(shutil.which('streamlink'))
+            },
+            'attempt_result': None,
+            'error_details': None
+        }
+        
+        # Try to create download directory
+        try:
+            os.makedirs(download_path, exist_ok=True)
+            result['prerequisites']['download_dir_created'] = True
+        except Exception as e:
+            result['prerequisites']['download_dir_created'] = False
+            result['prerequisites']['download_dir_error'] = str(e)
+        
+        # Try to start recording with detailed error capture
+        try:
+            recording_id = recording_manager.start_recording(streamer_id)
+            if recording_id:
+                result['attempt_result'] = f'success_recording_{recording_id}'
+            else:
+                result['attempt_result'] = 'failed_returned_none'
+        except Exception as e:
+            result['attempt_result'] = 'exception_thrown'
+            result['error_details'] = {
+                'error_message': str(e),
+                'error_type': type(e).__name__
+            }
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'error_type': type(e).__name__
+        })
+
+@app.route('/api/debug/test-streamlink', methods=['POST']) 
+def test_streamlink():
+    """Test if streamlink command works"""
+    try:
+        # Test basic streamlink
+        result = subprocess.run(['streamlink', '--version'], 
+                              capture_output=True, text=True, timeout=10)
+        
+        streamlink_works = result.returncode == 0
+        streamlink_output = result.stdout + result.stderr
+        
+        # Test streamlink with a simple stream
+        if streamlink_works:
+            test_result = subprocess.run([
+                'streamlink', '--loglevel', 'info', 
+                'https://twitch.tv/caseoh_', 'best', '--player', 'echo'
+            ], capture_output=True, text=True, timeout=30)
+            
+            stream_test_output = test_result.stdout + test_result.stderr
+        else:
+            stream_test_output = "Streamlink not available"
+            
+        return jsonify({
+            'streamlink_available': streamlink_works,
+            'streamlink_version': streamlink_output.strip(),
+            'stream_test_output': stream_test_output.strip()
+        })
+        
+    except subprocess.TimeoutExpired:
+        return jsonify({'error': 'Streamlink test timed out'})
+    except Exception as e:
+        return jsonify({'error': str(e), 'error_type': type(e).__name__})
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
