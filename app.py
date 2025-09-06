@@ -15,6 +15,7 @@ from sqlalchemy.orm import scoped_session, sessionmaker
 from twitch_manager import TwitchManager, StreamStatus
 from streamlink_manager import StreamlinkManager
 from notification_manager import NotificationManager
+from recording_manager import init_recording_manager, get_recording_manager
 
 # === CONTINUOUS MODE (behave like your stable Streamlink container) ===
 STRICT_CONTINUOUS_MODE = os.getenv("STRICT_CONTINUOUS_MODE", "1") not in ("0", "false", "False")
@@ -697,19 +698,10 @@ class AppConfig:
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.game_list = os.getenv('GAME_LIST', '')
 
-# Global variables for managing recording processes
+# Global variables for managing conversion processes
 recording_processes = {}
-monitor_threads = {}      # {streamer_id: Thread} - one monitor per streamer
-recording_threads = {}    # {recording_id: Thread} - one worker per active recording
-# Track per-recording stop flags for cooperative cancellation and per-recording PIDs
-recording_stop_flags = {}  # {recording_id: threading.Event()}
-recording_procinfo = {}   # {recording_id: {"pid": int, "proc": Popen, "stop_flag": threading.Event}}
-active_by_streamer = {}   # {streamer_id: recording_id}
 conversion_worker_thread = None
 conversion_wakeup = threading.Event()
-
-# Thread management lock to prevent race conditions
-thread_lock = threading.Lock()
 
 # Track conversion processes for hard-stop fallback
 conversion_processes = {}  # {job_id: {"proc": Popen, "pid": int}}
@@ -1416,7 +1408,8 @@ def _recording_paths(recording):
     base = os.path.join(download_path, recording.filename)
     return f"{base}.ts", f"{base}.part"
 
-def start_recording_for_streamer(streamer: Streamer):
+# Old start_recording_for_streamer function removed - now using RecordingManager
+def start_recording_for_streamer_removed(streamer: Streamer):
     """Start a recording for a specific streamer with duplicate protection"""
     # Block duplicates per streamer
     existing_id = active_by_streamer.get(streamer.id)
@@ -1520,7 +1513,8 @@ def start_recording_for_streamer(streamer: Streamer):
 
 
 
-def record_stream(streamer_id: int):
+# Old record_stream function removed - now using RecordingManager
+def record_stream_removed(streamer_id: int):
     with app.app_context():
         streamer = Streamer.query.get(streamer_id)
         if not streamer:
@@ -1842,15 +1836,27 @@ def update_streamer(streamer_id):
     streamer.updated_at = datetime.utcnow()
     db.session.commit()
     
-    # Handle recording thread
-    with thread_lock:
-        if streamer.is_active and streamer_id not in monitor_threads:
-            thread = threading.Thread(target=record_stream, args=(streamer_id,), daemon=True)
-            thread.start()
-            monitor_threads[streamer_id] = thread
-        elif not streamer.is_active and streamer_id in monitor_threads:
-            # Note: We can't easily stop the thread, but it will stop on next iteration
-            monitor_threads.pop(streamer_id, None)
+    # Handle recording using new recording manager
+    try:
+        recording_manager = get_recording_manager()
+        if streamer.is_active:
+            # Start recording if not already recording
+            if not recording_manager.is_streamer_recording(streamer_id):
+                recording_id = recording_manager.start_recording(streamer_id)
+                if recording_id:
+                    logger.info(f"Started recording {recording_id} for streamer {streamer_id}")
+                else:
+                    logger.warning(f"Failed to start recording for streamer {streamer_id}")
+        else:
+            # Stop recording if active
+            if recording_manager.is_streamer_recording(streamer_id):
+                success = recording_manager.stop_recording_by_streamer(streamer_id)
+                if success:
+                    logger.info(f"Stopped recording for streamer {streamer_id}")
+                else:
+                    logger.warning(f"Failed to stop recording for streamer {streamer_id}")
+    except Exception as e:
+        logger.error(f"Error handling recording for streamer {streamer_id}: {e}")
     
     return jsonify({'message': 'Streamer updated successfully'})
 
@@ -1860,8 +1866,14 @@ def delete_streamer(streamer_id):
     """API endpoint to delete a streamer"""
     streamer = Streamer.query.get_or_404(streamer_id)
     
-    # Stop recording thread
-    monitor_threads.pop(streamer_id, None)
+    # Stop recording using new recording manager
+    try:
+        recording_manager = get_recording_manager()
+        if recording_manager.is_streamer_recording(streamer_id):
+            recording_manager.stop_recording_by_streamer(streamer_id)
+            logger.info(f"Stopped recording for streamer {streamer_id} before deletion")
+    except Exception as e:
+        logger.error(f"Error stopping recording for streamer {streamer_id}: {e}")
     
     db.session.delete(streamer)
     db.session.commit()
@@ -2044,19 +2056,33 @@ def get_active_recordings():
         
         logger.info(f"Fetching active recordings: page={page}, per_page={per_page}")
         
-        active_recordings = Recording.query.filter_by(status='recording').order_by(Recording.started_at.desc()).paginate(
-            page=page, per_page=per_page, error_out=False
-        )
+        # Use new recording manager to get active recordings
+        recording_manager = get_recording_manager()
+        active_recordings_info = recording_manager.get_active_recordings()
+        
+        # Convert to list and sort by started_at
+        active_recordings_list = list(active_recordings_info.values())
+        active_recordings_list.sort(key=lambda x: x.started_at or datetime.min, reverse=True)
+        
+        # Paginate manually
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        paginated_recordings = active_recordings_list[start_idx:end_idx]
         
         recordings_data = []
-        for recording in active_recordings.items:
-            streamer = Streamer.query.get(recording.streamer_id)
+        for info in paginated_recordings:
+            # Get recording from database for additional info
+            recording = Recording.query.get(info.id)
+            streamer = Streamer.query.get(info.streamer_id) if recording else None
+            
+            if not recording or not streamer:
+                continue
             
             # Calculate current duration for active recordings
-            if recording.status == 'recording' and recording.started_at:
-                current_duration = int((datetime.utcnow() - recording.started_at).total_seconds())
+            if info.started_at:
+                current_duration = int((datetime.utcnow() - info.started_at).total_seconds())
             else:
-                current_duration = recording.duration or 0
+                current_duration = 0
             
             recordings_data.append({
                 'id': recording.id,
@@ -2071,11 +2097,15 @@ def get_active_recordings():
                 'duration': current_duration
             })
         
+        # Calculate pagination info
+        total = len(active_recordings_list)
+        pages = (total + per_page - 1) // per_page  # Ceiling division
+        
         logger.info(f"Returning {len(recordings_data)} active recordings")
         return jsonify({
             'recordings': recordings_data,
-            'total': active_recordings.total,
-            'pages': active_recordings.pages,
+            'total': total,
+            'pages': pages,
             'current_page': page,
             'per_page': per_page
         })
@@ -2092,49 +2122,16 @@ def stop_recording(recording_id):
         return jsonify({'error': 'Recording is not currently active'}), 400
     
     try:
-        # Signal cooperative stop
-        flag = recording_stop_flags.get(recording_id)
-        if flag:
-            flag.set()
-            logger.info(f"Set cooperative stop flag for recording {recording_id}")
+        # Use new recording manager to stop recording
+        recording_manager = get_recording_manager()
+        success = recording_manager.stop_recording(recording_id)
+        
+        if success:
+            logger.info(f"Stopped recording {recording_id}")
+            return jsonify({'message': 'Recording stopped successfully'})
         else:
-            logger.warning(f"No stop flag for recording {recording_id}; it may have already ended")
-        
-        # Give the loop time to flush and finalize (not rename .part)
-        wait_until = time.time() + 15
-        while time.time() < wait_until:
-            ts_path = os.path.join(get_download_path(), f"{recording.filename}.ts")
-            part_path = os.path.join(get_download_path(), f"{recording.filename}.part")
-            if os.path.exists(part_path) and not os.path.exists(ts_path):
-                break
-            time.sleep(0.5)
-        
-        # Hard stop fallback: terminate process if still running after grace period
-        proc_info = recording_procinfo.get(recording_id)
-        if proc_info and proc_info.get("proc"):
-            proc = proc_info["proc"]
-            if proc.poll() is None:  # Process is still running
-                logger.warning(f"Recording {recording_id} didn't stop cooperatively, terminating process {proc.pid}")
-                _safe_terminate(proc, timeout=15)
-        
-        # Use the same bulletproof finalization as the recording loop
-        # Get streamer_id before finalization
-        streamer_id = recording.streamer_id
-        recorded_filename = os.path.join(get_download_path(), recording.filename)
-        
-        # Create a minimal logger for the stop operation
-        stop_logger = logging.getLogger(f"stop.{recording_id}")
-        stop_logger.setLevel(logging.INFO)
-        
-        # Use the bulletproof finalization (was_manual_stop=True)
-        _bulletproof_finalize_recording(
-            recording_id=recording_id,
-            recorded_filename=recorded_filename,
-            streamer_id=streamer_id,
-            rec_logger=stop_logger,
-            was_manual_stop=True
-        )
-        return jsonify({'message': 'Recording stop signaled'})
+            logger.warning(f"Failed to stop recording {recording_id}")
+            return jsonify({'error': 'Failed to stop recording'}), 500
     except Exception as e:
         logger.error(f"Error stopping recording {recording_id}: {e}")
         return jsonify({'error': 'Failed to stop recording'}), 500
@@ -2936,6 +2933,15 @@ if __name__ == '__main__':
                     logger.error("All database locations failed. Exiting.")
                     exit(1)
     
+    # Initialize recording manager
+    try:
+        with app.app_context():
+            recording_manager = init_recording_manager(app, db)
+            logger.info("Recording manager initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize recording manager: {e}")
+        exit(1)
+    
     # Debug breadcrumbs: Log environment and tool versions
     try:
         import shutil, subprocess
@@ -2974,25 +2980,20 @@ if __name__ == '__main__':
     except Exception as e:
         logger.error(f"Error reconciling stale recordings: {e}")
 
-    # Start recording threads for existing active streamers
+    # Start recordings for existing active streamers using new recording manager
     try:
         with app.app_context():
+            recording_manager = get_recording_manager()
             active_streamers = Streamer.query.filter_by(is_active=True).all()
             for streamer in active_streamers:
-                with thread_lock:
-                    if streamer.id in monitor_threads:
-                        continue  # already started
-                    t = threading.Thread(
-                        target=record_stream,
-                        args=(streamer.id,),
-                        name=f"record-{streamer.id}",
-                        daemon=True,
-                    )
-                    t.start()
-                    monitor_threads[streamer.id] = t
-                    logger.info(f"Started monitoring on startup for active streamer {streamer.username} (id={streamer.id})")
+                if not recording_manager.is_streamer_recording(streamer.id):
+                    recording_id = recording_manager.start_recording(streamer.id)
+                    if recording_id:
+                        logger.info(f"Started recording {recording_id} for active streamer {streamer.username} (id={streamer.id})")
+                    else:
+                        logger.warning(f"Failed to start recording for active streamer {streamer.username} (id={streamer.id})")
     except Exception as e:
-        logger.error(f"Error starting recording threads: {e}")
+        logger.error(f"Error starting recordings for active streamers: {e}")
     
     # Start conversion worker once
     if not conversion_worker_thread or not conversion_worker_thread.is_alive():
