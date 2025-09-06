@@ -1953,6 +1953,66 @@ def debug_recording_status(recording_id):
             'error_type': type(e).__name__
         })
 
+@app.route('/api/debug/test-streamlink-command/<streamer_name>')
+def test_streamlink_command(streamer_name):
+    """Test the exact streamlink command that would be used"""
+    try:
+        from recording_manager import get_recording_manager
+        
+        # Build the command like the recording manager would
+        auth = TwitchAuth.query.first()
+        
+        cmd = ["streamlink"]
+        cmd += ["--loglevel", "info"]
+        
+        # Auth (same logic as recording_manager)
+        if auth:
+            if auth.oauth_token:
+                token = auth.oauth_token.strip()
+                if token.lower().startswith("oauth:"):
+                    token = token.split(":", 1)[1].strip()
+                if token.lower().startswith("oauth "):
+                    token = token.split(" ", 1)[1].strip()
+                
+                cmd += [f"--twitch-api-header=Authorization=OAuth {token}"]
+                cmd += ["--http-cookie", f"auth-token={token}"]
+            
+            if auth.client_id:
+                cmd += ["--http-header", f"Client-ID={auth.client_id}"]
+        
+        # Reliability options
+        cmd += [
+            "--retry-open", "999999",
+            "--retry-streams", "999999", 
+            "--stream-segment-attempts", "10",
+            "--stream-segment-timeout", "20",
+            "--hls-segment-threads", "1",
+            "--twitch-disable-ads"
+        ]
+        
+        # Test output to /tmp
+        test_file = f"/tmp/test_{streamer_name}.ts"
+        cmd += [f"https://twitch.tv/{streamer_name}", "best", "-o", test_file]
+        
+        # Show the command (mask sensitive data)
+        safe_cmd = []
+        for part in cmd:
+            if "Authorization=OAuth" in part:
+                safe_cmd.append(part[:25] + "***")
+            elif "auth-token=" in part:
+                safe_cmd.append(part[:15] + "***")
+            else:
+                safe_cmd.append(part)
+        
+        return jsonify({
+            'command': safe_cmd,
+            'test_file': test_file,
+            'note': 'This is the exact command the recording manager would run'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)})
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
