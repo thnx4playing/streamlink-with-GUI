@@ -17,6 +17,7 @@ COPY twitch_manager.py .
 COPY streamlink_manager.py .
 COPY notification_manager.py .
 COPY recording_manager.py .
+COPY stream_monitor.py .
 COPY templates/ ./templates/
 
 # Copy favicon (use favicon-new.png as fallback if favicon.png doesn't exist)
