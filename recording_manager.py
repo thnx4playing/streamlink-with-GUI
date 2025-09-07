@@ -37,9 +37,10 @@ class RecordingInfo:
     thread: Optional[threading.Thread] = None
     filename: str = ""
     error_message: str = ""
-    # Additional data to avoid database queries in thread
+    
+    # NEW: Store database data to avoid queries in thread
     streamer_twitch_name: str = ""
-    streamer_quality: str = ""
+    streamer_quality: str = "best"
     auth_data: dict = None
 
 class RecordingManager:
