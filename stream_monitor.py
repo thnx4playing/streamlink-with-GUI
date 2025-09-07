@@ -33,7 +33,7 @@ class StreamMonitor:
             
             stop_event = threading.Event()
             thread = threading.Thread(
-                target=self._monitor_streamer,
+                target=self._monitor_streamer_wrapper,  # Use wrapper function
                 args=(streamer_id, stop_event),
                 name=f"monitor-{streamer_id}",
                 daemon=True
@@ -83,63 +83,68 @@ class StreamMonitor:
         
         logger.info("Stopped monitoring all streamers")
     
+    def _monitor_streamer_wrapper(self, streamer_id: int, stop_event: threading.Event):
+        """Wrapper that provides Flask app context to the monitor loop"""
+        with self.app.app_context():
+            self._monitor_streamer(streamer_id, stop_event)
+    
     def _monitor_streamer(self, streamer_id: int, stop_event: threading.Event):
         """Monitor a single streamer for live status"""
         logger.info(f"Starting monitor loop for streamer {streamer_id}")
         
         while not stop_event.is_set() and self._running:
             try:
-                with self.app.app_context():
-                    from app import Streamer, AppConfig, TwitchManager, StreamStatus  # Import here
-                    
-                    # Get streamer info
-                    streamer = Streamer.query.get(streamer_id)
-                    if not streamer or not streamer.is_active:
-                        logger.info(f"Streamer {streamer_id} no longer active, stopping monitor")
-                        break
-                    
-                    # Check if already recording
-                    if self.recording_manager.is_streamer_recording(streamer_id):
-                        # Already recording, wait and continue
-                        if stop_event.wait(streamer.timer):
-                            break
-                        continue
-                    
-                    # Check Twitch status
-                    try:
-                        config = AppConfig(streamer)
-                        twitch_manager = TwitchManager(config)
-                        status, title = twitch_manager.check_user(streamer.twitch_name)
-                        
-                        logger.debug(f"Streamer {streamer.twitch_name} status: {status.name if status else 'None'}")
-                        
-                        if status == StreamStatus.ONLINE:
-                            logger.info(f"Streamer {streamer.twitch_name} is live: {title}")
-                            
-                            # Update stream title in case we want to use it
-                            if title and title.strip():
-                                streamer.title = title.strip()
-                                self.db.session.commit()
-                            
-                            # Start recording
-                            recording_id = self.recording_manager.start_recording(streamer_id)
-                            if recording_id:
-                                logger.info(f"Started recording {recording_id} for {streamer.twitch_name}")
-                            else:
-                                logger.warning(f"Failed to start recording for {streamer.twitch_name}")
-                        
-                        elif status == StreamStatus.UNDESIRED_GAME:
-                            logger.debug(f"Streamer {streamer.twitch_name} playing undesired game, skipping")
-                        
-                        elif status == StreamStatus.OFFLINE:
-                            logger.debug(f"Streamer {streamer.twitch_name} is offline")
-                        
-                        elif status == StreamStatus.ERROR:
-                            logger.warning(f"Error checking status for {streamer.twitch_name}")
-                        
-                    except Exception as e:
-                        logger.exception(f"Error checking Twitch status for streamer {streamer_id}: {e}")
+                # We're already in app context thanks to the wrapper
+                from app import Streamer, AppConfig, TwitchManager, StreamStatus  # Import here
                 
+                # Get streamer info
+                streamer = Streamer.query.get(streamer_id)
+                if not streamer or not streamer.is_active:
+                    logger.info(f"Streamer {streamer_id} no longer active, stopping monitor")
+                    break
+                
+                # Check if already recording
+                if self.recording_manager.is_streamer_recording(streamer_id):
+                    # Already recording, wait and continue
+                    if stop_event.wait(streamer.timer):
+                        break
+                    continue
+                
+                # Check Twitch status
+                try:
+                    config = AppConfig(streamer)
+                    twitch_manager = TwitchManager(config)
+                    status, title = twitch_manager.check_user(streamer.twitch_name)
+                    
+                    logger.debug(f"Streamer {streamer.twitch_name} status: {status.name if status else 'None'}")
+                    
+                    if status == StreamStatus.ONLINE:
+                        logger.info(f"Streamer {streamer.twitch_name} is live: {title}")
+                        
+                        # Update stream title in case we want to use it
+                        if title and title.strip():
+                            streamer.title = title.strip()
+                            self.db.session.commit()
+                        
+                        # Start recording
+                        recording_id = self.recording_manager.start_recording(streamer_id)
+                        if recording_id:
+                            logger.info(f"Started recording {recording_id} for {streamer.twitch_name}")
+                        else:
+                            logger.warning(f"Failed to start recording for {streamer.twitch_name}")
+                    
+                    elif status == StreamStatus.UNDESIRED_GAME:
+                        logger.debug(f"Streamer {streamer.twitch_name} playing undesired game, skipping")
+                    
+                    elif status == StreamStatus.OFFLINE:
+                        logger.debug(f"Streamer {streamer.twitch_name} is offline")
+                    
+                    elif status == StreamStatus.ERROR:
+                        logger.warning(f"Error checking status for {streamer.twitch_name}")
+                    
+                except Exception as e:
+                    logger.exception(f"Error checking Twitch status for streamer {streamer_id}: {e}")
+            
                 # Wait for next check (with early exit on stop)
                 if stop_event.wait(streamer.timer if 'streamer' in locals() else 360):
                     break
