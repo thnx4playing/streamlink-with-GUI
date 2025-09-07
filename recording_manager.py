@@ -418,33 +418,14 @@ class RecordingManager:
         return f"{streamer.twitch_name} - {timestamp}"
     
     def _build_streamlink_cmd(self, streamer, output_path: str, auth) -> list:
-        """Build streamlink command (simplified and working version)"""
-        cmd = ["streamlink"]
-        
-        # Basic logging
-        cmd += ["--loglevel", "info"]
-        
-        # Simple auth (optional - streamlink works without it for public streams)
-        if auth and auth.oauth_token:
-            token = auth.oauth_token.strip()
-            # Clean up token format
-            if token.lower().startswith("oauth:"):
-                token = token.split(":", 1)[1].strip()
-            if token.lower().startswith("oauth "):
-                token = token.split(" ", 1)[1].strip()
-            
-            if token:  # Only add if we have a clean token
-                cmd += ["--twitch-disable-ads"]
-                cmd += ["--http-header", f"Authorization=OAuth {token}"]
-        
-        # Minimal reliability options (avoid problematic flags)
-        cmd += [
-            "--retry-streams", "10",        # Reasonable retry count
-            "--stream-segment-attempts", "3" # Conservative segment attempts
+        """Build streamlink command (ultra-minimal version)"""
+        # Just the basics that we know work from your successful test
+        cmd = [
+            "streamlink",
+            f"https://twitch.tv/{streamer.twitch_name}",
+            streamer.quality,
+            "-o", output_path
         ]
-        
-        # Stream URL, quality, and output
-        cmd += [f"https://twitch.tv/{streamer.twitch_name}", streamer.quality, "-o", output_path]
         
         return cmd
     
