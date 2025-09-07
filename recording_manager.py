@@ -109,6 +109,16 @@ class RecordingManager:
     def start_recording(self, streamer_id: int) -> Optional[int]:
         """
         Start recording for a streamer. Returns recording_id if successful, None if already recording.
+        This method ensures Flask app context is available.
+        """
+        # Ensure we have Flask app context
+        with self.app.app_context():
+            return self._start_recording_with_context(streamer_id)
+
+    def _start_recording_with_context(self, streamer_id: int) -> Optional[int]:
+        """
+        Internal method that does the actual recording start logic.
+        This method assumes Flask app context is already available.
         """
         logger.info(f"🎬 START_RECORDING called for streamer {streamer_id}")
         
@@ -126,86 +136,85 @@ class RecordingManager:
                     self._cleanup_recording_unsafe(existing_id)
             
             # Create new recording in database
-            with self.app.app_context():
-                try:
-                    from app import Streamer, Recording, TwitchAuth  # Import here to avoid circular imports
-                    
-                    # GET ALL DATABASE DATA FIRST (before starting thread)
-                    streamer = Streamer.query.get(streamer_id)
-                    if not streamer:
-                        logger.error(f"❌ Streamer {streamer_id} not found")
-                        return None
-                    
-                    logger.info(f"✅ Found streamer: {streamer.username} (Twitch: {streamer.twitch_name})")
-                    
-                    # Get auth data before starting thread
-                    auth = TwitchAuth.query.first()
-                    logger.info(f"🔑 Auth data found: {bool(auth)}")
-                    if auth:
-                        logger.info(f"🔑 Has OAuth token: {bool(auth.oauth_token)}")
-                        logger.info(f"🔑 Has Client ID: {bool(auth.client_id)}")
-                    
-                    # Create recording record
-                    recording = Recording(
-                        streamer_id=streamer_id,
-                        filename=self._make_filename(streamer),
-                        title="",  # Will be updated when stream info is fetched
-                        status='recording',
-                        started_at=datetime.utcnow()
-                    )
-                    self.db.session.add(recording)
-                    self.db.session.commit()
-                    
-                    recording_id = recording.id
-                    logger.info(f"📝 Created recording record with ID: {recording_id}")
-                    
-                    # Create recording info with all the data needed
-                    info = RecordingInfo(
-                        id=recording_id,
-                        streamer_id=streamer_id,
-                        state=RecordingState.STARTING,
-                        started_at=datetime.utcnow(),
-                        stop_event=threading.Event(),
-                        filename=recording.filename
-                    )
-                    
-                    # Add the database data to the info object so thread doesn't need to query
-                    info.streamer_twitch_name = streamer.twitch_name
-                    info.streamer_quality = streamer.quality or 'best'
-                    info.auth_data = {
-                        'oauth_token': auth.oauth_token if auth else None,
-                        'client_id': auth.client_id if auth else None,
-                        'client_secret': auth.client_secret if auth else None,
-                        'extra_flags': auth.extra_flags if auth else None,
-                        'enable_hls_live_restart': getattr(auth, 'enable_hls_live_restart', False) if auth else False
-                    }
-                    
-                    logger.info(f"🎯 Recording info prepared - Twitch name: {info.streamer_twitch_name}, Quality: {info.streamer_quality}")
-                    
-                    # Start recording thread
-                    thread = threading.Thread(
-                        target=self._recording_worker,
-                        args=(info,),
-                        name=f"recording-{recording_id}",
-                        daemon=True
-                    )
-                    info.thread = thread
-                    
-                    # Register recording
-                    self._recordings[recording_id] = info
-                    self._streamer_recordings[streamer_id] = recording_id
-                    
-                    # Start the thread
-                    thread.start()
-                    logger.info(f"🚀 Started recording thread for recording {recording_id}")
-                    
-                    logger.info(f"✅ Successfully started recording {recording_id} for streamer {streamer_id}")
-                    return recording_id
-                    
-                except Exception as e:
-                    logger.exception(f"❌ Error starting recording for streamer {streamer_id}: {e}")
-                    self.db.session.rollback()
+            try:
+                from app import Streamer, Recording, TwitchAuth  # Import here to avoid circular imports
+                
+                # GET ALL DATABASE DATA FIRST (before starting thread)
+                streamer = Streamer.query.get(streamer_id)
+                if not streamer:
+                    logger.error(f"❌ Streamer {streamer_id} not found")
                     return None
+                
+                logger.info(f"✅ Found streamer: {streamer.username} (Twitch: {streamer.twitch_name})")
+                
+                # Get auth data before starting thread
+                auth = TwitchAuth.query.first()
+                logger.info(f"🔑 Auth data found: {bool(auth)}")
+                if auth:
+                    logger.info(f"🔑 Has OAuth token: {bool(auth.oauth_token)}")
+                    logger.info(f"🔑 Has Client ID: {bool(auth.client_id)}")
+                
+                # Create recording record
+                recording = Recording(
+                    streamer_id=streamer_id,
+                    filename=self._make_filename(streamer),
+                    title="",  # Will be updated when stream info is fetched
+                    status='recording',
+                    started_at=datetime.utcnow()
+                )
+                self.db.session.add(recording)
+                self.db.session.commit()
+                
+                recording_id = recording.id
+                logger.info(f"📝 Created recording record with ID: {recording_id}")
+                
+                # Create recording info with all the data needed
+                info = RecordingInfo(
+                    id=recording_id,
+                    streamer_id=streamer_id,
+                    state=RecordingState.STARTING,
+                    started_at=datetime.utcnow(),
+                    stop_event=threading.Event(),
+                    filename=recording.filename
+                )
+                
+                # Add the database data to the info object so thread doesn't need to query
+                info.streamer_twitch_name = streamer.twitch_name
+                info.streamer_quality = streamer.quality or 'best'
+                info.auth_data = {
+                    'oauth_token': auth.oauth_token if auth else None,
+                    'client_id': auth.client_id if auth else None,
+                    'client_secret': auth.client_secret if auth else None,
+                    'extra_flags': auth.extra_flags if auth else None,
+                    'enable_hls_live_restart': getattr(auth, 'enable_hls_live_restart', False) if auth else False
+                }
+                
+                logger.info(f"🎯 Recording info prepared - Twitch name: {info.streamer_twitch_name}, Quality: {info.streamer_quality}")
+                
+                # Start recording thread
+                thread = threading.Thread(
+                    target=self._recording_worker,
+                    args=(info,),
+                    name=f"recording-{recording_id}",
+                    daemon=True
+                )
+                info.thread = thread
+                
+                # Register recording
+                self._recordings[recording_id] = info
+                self._streamer_recordings[streamer_id] = recording_id
+                
+                # Start the thread
+                thread.start()
+                logger.info(f"🚀 Started recording thread for recording {recording_id}")
+                
+                logger.info(f"✅ Successfully started recording {recording_id} for streamer {streamer_id}")
+                return recording_id
+                
+            except Exception as e:
+                logger.exception(f"❌ Error starting recording for streamer {streamer_id}: {e}")
+                self.db.session.rollback()
+                return None
     
     def stop_recording(self, recording_id: int) -> bool:
         """Stop a recording by recording_id"""
