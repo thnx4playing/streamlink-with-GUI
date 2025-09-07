@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simplified Recording Manager - replaces the complex recording logic in app.py
+Fixed Recording Manager with proper OAuth implementation
 """
 import os
 import sys
@@ -38,7 +38,7 @@ class RecordingInfo:
     filename: str = ""
     error_message: str = ""
     
-    # NEW: Store database data to avoid queries in thread
+    # Store database data to avoid queries in thread
     streamer_twitch_name: str = ""
     streamer_quality: str = "best"
     auth_data: dict = None
@@ -110,6 +110,8 @@ class RecordingManager:
         """
         Start recording for a streamer. Returns recording_id if successful, None if already recording.
         """
+        logger.info(f"🎬 START_RECORDING called for streamer {streamer_id}")
+        
         with self._lock:
             # Check if already recording
             if streamer_id in self._streamer_recordings:
@@ -120,6 +122,7 @@ class RecordingManager:
                     return None
                 else:
                     # Clean up stale recording
+                    logger.info(f"Cleaning up stale recording {existing_id} for streamer {streamer_id}")
                     self._cleanup_recording_unsafe(existing_id)
             
             # Create new recording in database
@@ -130,11 +133,17 @@ class RecordingManager:
                     # GET ALL DATABASE DATA FIRST (before starting thread)
                     streamer = Streamer.query.get(streamer_id)
                     if not streamer:
-                        logger.error(f"Streamer {streamer_id} not found")
+                        logger.error(f"❌ Streamer {streamer_id} not found")
                         return None
+                    
+                    logger.info(f"✅ Found streamer: {streamer.username} (Twitch: {streamer.twitch_name})")
                     
                     # Get auth data before starting thread
                     auth = TwitchAuth.query.first()
+                    logger.info(f"🔑 Auth data found: {bool(auth)}")
+                    if auth:
+                        logger.info(f"🔑 Has OAuth token: {bool(auth.oauth_token)}")
+                        logger.info(f"🔑 Has Client ID: {bool(auth.client_id)}")
                     
                     # Create recording record
                     recording = Recording(
@@ -148,6 +157,7 @@ class RecordingManager:
                     self.db.session.commit()
                     
                     recording_id = recording.id
+                    logger.info(f"📝 Created recording record with ID: {recording_id}")
                     
                     # Create recording info with all the data needed
                     info = RecordingInfo(
@@ -161,11 +171,16 @@ class RecordingManager:
                     
                     # Add the database data to the info object so thread doesn't need to query
                     info.streamer_twitch_name = streamer.twitch_name
-                    info.streamer_quality = streamer.quality
+                    info.streamer_quality = streamer.quality or 'best'
                     info.auth_data = {
                         'oauth_token': auth.oauth_token if auth else None,
-                        'client_id': auth.client_id if auth else None
+                        'client_id': auth.client_id if auth else None,
+                        'client_secret': auth.client_secret if auth else None,
+                        'extra_flags': auth.extra_flags if auth else None,
+                        'enable_hls_live_restart': getattr(auth, 'enable_hls_live_restart', False) if auth else False
                     }
+                    
+                    logger.info(f"🎯 Recording info prepared - Twitch name: {info.streamer_twitch_name}, Quality: {info.streamer_quality}")
                     
                     # Start recording thread
                     thread = threading.Thread(
@@ -182,12 +197,13 @@ class RecordingManager:
                     
                     # Start the thread
                     thread.start()
+                    logger.info(f"🚀 Started recording thread for recording {recording_id}")
                     
-                    logger.info(f"Started recording {recording_id} for streamer {streamer_id}")
+                    logger.info(f"✅ Successfully started recording {recording_id} for streamer {streamer_id}")
                     return recording_id
                     
                 except Exception as e:
-                    logger.exception(f"Error starting recording for streamer {streamer_id}: {e}")
+                    logger.exception(f"❌ Error starting recording for streamer {streamer_id}: {e}")
                     self.db.session.rollback()
                     return None
     
@@ -256,36 +272,41 @@ class RecordingManager:
             info = self._recordings.get(recording_id)
             return info and info.state in (RecordingState.STARTING, RecordingState.RECORDING)
     
+    def is_recording_active(self, recording_id: int) -> bool:
+        """Check if a specific recording is active"""
+        with self._lock:
+            info = self._recordings.get(recording_id)
+            return info and info.state in (RecordingState.STARTING, RecordingState.RECORDING)
+    
     def _recording_worker(self, info: RecordingInfo):
         """Main recording worker thread"""
-        logger.info(f"ENTERING _recording_worker for recording {info.id}")  # ADD THIS
+        logger.info(f"🔧 WORKER: Starting recording worker for recording {info.id}")
         try:
-            logger.info(f"About to enter app context for recording {info.id}")  # ADD THIS
             with self.app.app_context():
-                logger.info(f"Inside app context, calling _run_recording for {info.id}")  # ADD THIS
+                logger.info(f"🔧 WORKER: Entering app context for recording {info.id}")
                 self._run_recording(info)
-            logger.info(f"_run_recording completed for recording {info.id}")  # ADD THIS
+            logger.info(f"🔧 WORKER: Recording completed for recording {info.id}")
         except Exception as e:
-            logger.exception(f"Recording worker error for {info.id}: {e}")
+            logger.exception(f"❌ WORKER: Recording worker error for {info.id}: {e}")
             info.state = RecordingState.FAILED
             info.error_message = str(e)
         finally:
-            logger.info(f"Entering finally block for recording {info.id}")  # ADD THIS
+            logger.info(f"🔧 WORKER: Finalizing recording {info.id}")
             self._finalize_recording(info)
-            logger.info(f"_finalize_recording completed for recording {info.id}")  # ADD THIS
     
     def _run_recording(self, info: RecordingInfo):
-        """Run the actual recording process (NO DATABASE ACCESS)"""
-        logger.info(f"ENTERING _run_recording for recording {info.id}")  # ADD THIS AS FIRST LINE
+        """Run the actual recording process with FIXED OAuth implementation"""
+        logger.info(f"🎥 RECORDING: Starting recording process for {info.id}")
         
         from app import get_download_path
-        logger.info(f"Import successful for recording {info.id}")  # ADD THIS TOO
         
-        try:  # ADD THIS TRY BLOCK
+        try:
             # Use the data that was passed from start_recording (no database queries)
             streamer_twitch_name = info.streamer_twitch_name
             streamer_quality = info.streamer_quality
             auth_data = info.auth_data
+            
+            logger.info(f"🎯 Recording {info.id} - Streamer: {streamer_twitch_name}, Quality: {streamer_quality}")
             
             # Build output path
             download_path = get_download_path()
@@ -294,25 +315,17 @@ class RecordingManager:
             base_path = os.path.join(download_path, info.filename)
             ts_path = f"{base_path}.ts"
             
-            # Build streamlink command with OAuth token
-            cmd = ["streamlink"]
-
-            # Add OAuth token if available
-            if info.auth_data and info.auth_data.get('oauth_token'):
-                token = info.auth_data['oauth_token'].strip()
-                # Clean token format
-                if token.lower().startswith("oauth:"):
-                    token = token.split(":", 1)[1].strip()
-                if token.lower().startswith("oauth "):
-                    token = token.split(" ", 1)[1].strip()
-                
-                cmd += ["--twitch-disable-ads"]
-                cmd += ["--http-header", f"Authorization=OAuth {token}"]
-
-            # Add stream URL and output
-            cmd += [f"https://twitch.tv/{streamer_twitch_name}", streamer_quality, "-o", ts_path]
+            logger.info(f"📁 Output path: {ts_path}")
             
-            logger.info(f"Starting streamlink for recording {info.id}: {' '.join(cmd)}")  # ADD THIS LOG
+            # Build streamlink command with FIXED OAuth implementation
+            cmd = self._build_streamlink_command(
+                twitch_username=streamer_twitch_name,
+                quality=streamer_quality,
+                output_path=ts_path,
+                auth_data=auth_data
+            )
+            
+            logger.info(f"🔨 Built streamlink command: {' '.join(cmd[:8])}... (truncated for security)")
             
             # Start process
             process = subprocess.Popen(
@@ -326,7 +339,7 @@ class RecordingManager:
             info.pid = process.pid
             info.state = RecordingState.RECORDING
             
-            logger.info(f"Streamlink process started with PID {process.pid}")  # ADD THIS LOG
+            logger.info(f"🚀 RECORDING: Streamlink process started with PID {process.pid}")
             
             # Start watchdog
             watchdog_thread = threading.Thread(
@@ -339,7 +352,7 @@ class RecordingManager:
             
             # Wait for process to complete
             return_code = process.wait()
-            logger.info(f"Streamlink process finished with return code {return_code}")  # ADD THIS LOG
+            logger.info(f"⏹️ RECORDING: Streamlink process finished with return code {return_code}")
             
             if return_code == 0:
                 info.state = RecordingState.COMPLETED
@@ -347,11 +360,102 @@ class RecordingManager:
                 info.state = RecordingState.FAILED
                 info.error_message = f"Process exited with code {return_code}"
                 
-        except Exception as e:  # ADD THIS EXCEPTION HANDLING
-            logger.exception(f"Error in _run_recording for {info.id}: {e}")
+        except Exception as e:
+            logger.exception(f"❌ RECORDING: Error in _run_recording for {info.id}: {e}")
             info.state = RecordingState.FAILED
             info.error_message = str(e)
             raise
+    
+    def _build_streamlink_command(self, twitch_username: str, quality: str, output_path: str, auth_data: dict) -> list:
+        """Build streamlink command with PROPER OAuth implementation"""
+        cmd = ["streamlink"]
+        
+        # Set log level
+        streamlink_debug = os.getenv("STREAMLINK_DEBUG", "0") in ("1", "true", "True")
+        cmd += ["--loglevel", "debug" if streamlink_debug else "info"]
+        
+        # Add OAuth authentication if available (FIXED)
+        if auth_data and auth_data.get('oauth_token'):
+            token = self._normalize_oauth_token(auth_data['oauth_token'])
+            
+            if token:
+                logger.info(f"🔑 Using OAuth token for authentication (length: {len(token)})")
+                # Use --twitch-api-header instead of --http-header for Twitch-specific auth
+                cmd += ["--twitch-api-header", f"Authorization=OAuth {token}"]
+                
+                # Also add as HTTP cookie for additional compatibility
+                cmd += ["--http-cookie", f"auth-token={token}"]
+            else:
+                logger.warning("⚠️ OAuth token is empty after normalization")
+        else:
+            logger.warning("⚠️ No OAuth token available - recording may have ads")
+        
+        # Add Client-ID if available
+        if auth_data and auth_data.get('client_id'):
+            cmd += ["--http-header", f"Client-ID={auth_data['client_id']}"]
+            logger.info(f"🆔 Added Client-ID header")
+        
+        # Add standard Twitch options for reliability
+        cmd += [
+            "--retry-open", "999999",
+            "--retry-streams", "999999",
+            "--stream-segment-attempts", "10",
+            "--stream-segment-timeout", "20",
+            "--hls-segment-threads", "1",
+            "--twitch-disable-ads",  # This is important for ad prevention
+        ]
+        
+        # Conditionally add --hls-live-restart if enabled (can cause indefinite reconnection)
+        if auth_data and auth_data.get('enable_hls_live_restart'):
+            cmd.append("--hls-live-restart")
+            logger.info("🔄 Added --hls-live-restart flag")
+        
+        # Add extra flags if specified (with sanitization)
+        extra_flags = auth_data.get('extra_flags') if auth_data else None
+        if extra_flags and extra_flags.strip():
+            # Sanitize extra flags - remove potentially problematic ones
+            DISALLOWED_FLAGS = {"--retry-delay", "--hls-timeout", "--hls-segment-timeout"}
+            flag_parts = extra_flags.strip().split()
+            safe_flags = []
+            skip_next = False
+            
+            for i, flag in enumerate(flag_parts):
+                if skip_next:
+                    skip_next = False
+                    continue
+                if flag in DISALLOWED_FLAGS:
+                    skip_next = True  # Skip the flag and its value
+                    continue
+                safe_flags.append(flag)
+            
+            if safe_flags:
+                cmd += safe_flags
+                logger.info(f"🏴 Added extra flags: {' '.join(safe_flags)}")
+        
+        # Add stream URL and output
+        stream_url = f"https://twitch.tv/{twitch_username}"
+        cmd += [stream_url, quality, "-o", output_path]
+        
+        logger.info(f"🎯 Final command structure: streamlink [auth] [options] {stream_url} {quality} -o {output_path}")
+        
+        return cmd
+    
+    def _normalize_oauth_token(self, raw_token: str) -> str:
+        """Normalize OAuth token - remove oauth: prefix if present"""
+        if not raw_token:
+            return ""
+        
+        token = raw_token.strip()
+        
+        # Remove 'oauth:' prefix if present
+        if token.lower().startswith("oauth:"):
+            token = token.split(":", 1)[1].strip()
+        
+        # Remove 'oauth ' prefix if present
+        if token.lower().startswith("oauth "):
+            token = token.split(" ", 1)[1].strip()
+        
+        return token
     
     def _watchdog_worker(self, info: RecordingInfo):
         """Watchdog to monitor recording health"""
@@ -363,15 +467,18 @@ class RecordingManager:
         stall_timeout = int(os.getenv('STALL_TIMEOUT_SECONDS', '480'))  # 8 minutes
         max_duration = int(os.getenv('MAX_RECORDING_DURATION', '28800'))  # 8 hours
         
+        logger.info(f"🐕 WATCHDOG: Starting for recording {info.id}")
+        
         while not info.stop_event.is_set() and info.process and info.process.poll() is None:
             try:
                 # Check for stop signal
                 if info.stop_event.wait(15):  # Check every 15 seconds
+                    logger.info(f"🐕 WATCHDOG: Stop signal received for recording {info.id}")
                     break
                 
                 # Check max duration
                 if info.started_at and (datetime.utcnow() - info.started_at).total_seconds() > max_duration:
-                    logger.info(f"Recording {info.id} hit max duration, stopping")
+                    logger.info(f"🐕 WATCHDOG: Recording {info.id} hit max duration, stopping")
                     info.stop_event.set()
                     break
                 
@@ -387,16 +494,20 @@ class RecordingManager:
                     last_size = current_size
                     last_change = time.time()
                 elif time.time() - last_change > stall_timeout:
-                    logger.info(f"Recording {info.id} stalled (no growth for {stall_timeout}s), stopping")
+                    logger.info(f"🐕 WATCHDOG: Recording {info.id} stalled (no growth for {stall_timeout}s), stopping")
                     info.stop_event.set()
                     break
                 
             except Exception as e:
-                logger.exception(f"Watchdog error for recording {info.id}: {e}")
+                logger.exception(f"🐕 WATCHDOG: Error for recording {info.id}: {e}")
                 break
+        
+        logger.info(f"🐕 WATCHDOG: Finished for recording {info.id}")
     
     def _finalize_recording(self, info: RecordingInfo):
         """Finalize recording and update database"""
+        logger.info(f"🏁 FINALIZE: Starting finalization for recording {info.id}")
+        
         try:
             with self.app.app_context():
                 from app import Recording  # Import here to avoid circular imports
@@ -430,10 +541,12 @@ class RecordingManager:
                             pass
                     
                     self.db.session.commit()
-                    logger.info(f"Finalized recording {info.id} with status {recording.status}")
+                    logger.info(f"🏁 FINALIZE: Recording {info.id} finalized with status {recording.status}")
+                else:
+                    logger.error(f"🏁 FINALIZE: Recording {info.id} not found in database")
                 
         except Exception as e:
-            logger.exception(f"Error finalizing recording {info.id}: {e}")
+            logger.exception(f"🏁 FINALIZE: Error finalizing recording {info.id}: {e}")
         finally:
             # Always clean up tracking data
             with self._lock:
@@ -448,17 +561,16 @@ class RecordingManager:
                 if self._streamer_recordings[info.streamer_id] == recording_id:
                     self._streamer_recordings.pop(info.streamer_id, None)
             
-            logger.debug(f"Cleaned up recording {recording_id}")
+            logger.debug(f"🧹 Cleaned up recording {recording_id}")
     
     def _make_filename(self, streamer) -> str:
         """Generate filename for recording"""
         timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
         return f"{streamer.twitch_name} - {timestamp}"
     
-    
     def shutdown(self):
         """Shutdown the recording manager"""
-        logger.info("Shutting down recording manager")
+        logger.info("🛑 Shutting down recording manager")
         self._running = False
         
         # Stop all active recordings
