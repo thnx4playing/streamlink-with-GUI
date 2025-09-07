@@ -64,7 +64,9 @@ class StreamMonitor:
         for attempt in range(max_retries):
             try:
                 with self.app.app_context():
-                    from app import Streamer  # Import here to avoid circular imports
+                    Streamer = self.app.extensions.get('models', {}).get('Streamer')
+                    if Streamer is None:
+                        raise RuntimeError("Streamer model not registered in app.extensions['models']")
                     active_streamers = Streamer.query.filter_by(is_active=True).all()
                     
                     # Store the streamer IDs to start monitoring outside the app context
@@ -74,8 +76,9 @@ class StreamMonitor:
                 for streamer_id in streamer_ids:
                     self.start_monitoring(streamer_id)
                     
-                logger.info(f"Started monitoring {len(streamer_ids)} active streamers")
-                return  # Success - exit the retry loop
+                count = len(streamer_ids)
+                logger.info(f"Started monitoring {count} active streamers")
+                return count  # Success - exit the retry loop
                     
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} failed to start monitoring: {e}")
@@ -83,7 +86,7 @@ class StreamMonitor:
                     time.sleep(1)  # Wait 1 second before retry
                 else:
                     logger.exception(f"Error starting monitoring for all active streamers after {max_retries} attempts: {e}")
-                    # Don't raise the exception - let the app continue
+                    return 0  # Keep the app running; caller can inspect the count
     
     def stop_all_monitoring(self):
         """Stop monitoring all streamers"""
@@ -107,7 +110,12 @@ class StreamMonitor:
         while not stop_event.is_set() and self._running:
             try:
                 # We're already in app context thanks to the wrapper
-                from app import Streamer, AppConfig, TwitchManager, StreamStatus  # Import here
+                models = self.app.extensions.get('models', {})
+                Streamer = models.get('Streamer')
+                AppConfig = models.get('AppConfig')
+                from twitch_manager import TwitchManager, StreamStatus
+                if Streamer is None or AppConfig is None:
+                    raise RuntimeError("Models not registered in app.extensions['models']")
                 
                 # Get streamer info
                 streamer = Streamer.query.get(streamer_id)
@@ -214,5 +222,5 @@ def get_stream_monitor():
     if 'stream_monitor' not in current_app.extensions:
         from recording_manager import get_recording_manager
         recording_manager = get_recording_manager()
-        init_stream_monitor(current_app, current_app.extensions['sqlalchemy'].db, recording_manager)
+        init_stream_monitor(current_app, current_app.extensions['sqlalchemy'], recording_manager)
     return current_app.extensions['stream_monitor']

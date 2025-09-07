@@ -479,5 +479,5 @@ def get_recording_manager():
     """Get recording manager from current app"""
     from flask import current_app
     if 'recording_manager' not in current_app.extensions:
-        init_recording_manager(current_app, current_app.extensions['sqlalchemy'].db)
+        init_recording_manager(current_app, current_app.extensions['sqlalchemy'])
     return current_app.extensions['recording_manager']

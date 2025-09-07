@@ -396,6 +396,22 @@ class AppConfig:
         self.telegram_chat_id = os.getenv('TELEGRAM_CHAT_ID')
         self.game_list = os.getenv('GAME_LIST', '')
 
+# === Models/Class registry to avoid circular imports inside threads ===
+# This lets worker threads access your models/classes without importing 'app'
+# (which would create a second Flask/SQLAlchemy instance).
+try:
+    app.extensions.setdefault('models', {})
+    app.extensions['models'].update({
+        'Streamer': Streamer,
+        'Recording': Recording,
+        'ConversionSettings': ConversionSettings,
+        'ConversionJob': ConversionJob,
+        'TwitchAuth': TwitchAuth,
+        'AppConfig': AppConfig,
+    })
+except Exception as _e:
+    logger.warning(f"Could not register models in app.extensions: {_e}")
+
 # Global variables for managing conversion processes
 recording_processes = {}
 conversion_worker_thread = None
@@ -2143,9 +2159,13 @@ def force_startup_monitoring():
     try:
         logger.info("🔧 MANUAL-STARTUP: Force starting monitoring...")
         stream_monitor = get_stream_monitor()
-        stream_monitor.start_monitoring_all_active()
-        logger.info("✅ MANUAL-STARTUP: Successfully started monitoring")
-        return jsonify({'message': 'Monitoring started successfully', 'success': True})
+        started = stream_monitor.start_monitoring_all_active()
+        logger.info(f"✅ MANUAL-STARTUP: Started monitoring for {started} streamers")
+        return jsonify({
+            'message': f'Started monitoring for {started} streamer(s)',
+            'started': started,
+            'success': started >= 0
+        })
     except Exception as e:
         logger.exception(f"❌ MANUAL-STARTUP: Error starting monitoring: {e}")
         return jsonify({'error': str(e), 'success': False}), 500
@@ -3049,9 +3069,9 @@ def ensure_monitoring_started():
         try:
             logger.info("🚀 FIRST-REQUEST: Starting monitoring on first request...")
             stream_monitor = get_stream_monitor()
-            stream_monitor.start_monitoring_all_active()
+            started = stream_monitor.start_monitoring_all_active()
             monitoring_initialized = True
-            logger.info("✅ FIRST-REQUEST: Successfully started monitoring all active streamers")
+            logger.info(f"✅ FIRST-REQUEST: Started monitoring for {started} active streamers")
         except Exception as e:
             logger.exception(f"❌ FIRST-REQUEST: Error starting stream monitoring: {e}")
 
