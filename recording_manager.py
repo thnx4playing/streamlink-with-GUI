@@ -295,13 +295,14 @@ class RecordingManager:
             self._finalize_recording(info)
     
     def _run_recording(self, info: RecordingInfo):
-        """Run the actual recording process with FIXED OAuth implementation"""
+        """Run the actual recording process using existing StreamlinkManager"""
         logger.info(f"🎥 RECORDING: Starting recording process for {info.id}")
         
         from app import get_download_path
+        from streamlink_manager import StreamlinkManager  # Import your working class
         
         try:
-            # Use the data that was passed from start_recording (no database queries)
+            # Use the data that was passed from start_recording
             streamer_twitch_name = info.streamer_twitch_name
             streamer_quality = info.streamer_quality
             auth_data = info.auth_data
@@ -313,196 +314,59 @@ class RecordingManager:
             os.makedirs(download_path, exist_ok=True)
             
             base_path = os.path.join(download_path, info.filename)
-            ts_path = f"{base_path}.ts"
+            # Note: StreamlinkManager will add the .ts extension
             
-            logger.info(f"📁 Output path: {ts_path}")
+            logger.info(f"📁 Output path: {base_path}")
             
-            # Build streamlink command with FIXED OAuth implementation
-            cmd = self._build_streamlink_command(
-                twitch_username=streamer_twitch_name,
-                quality=streamer_quality,
-                output_path=ts_path,
-                auth_data=auth_data
-            )
+            # Create a config object like your existing AppConfig
+            class RecordingConfig:
+                def __init__(self, auth_data):
+                    self.oauth_token = auth_data.get('oauth_token') if auth_data else None
+                    self.quality = streamer_quality
             
-            logger.info(f"🔨 Built streamlink command: {' '.join(cmd[:8])}... (truncated for security)")
+            config = RecordingConfig(auth_data)
             
-            # Start process
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                env=os.environ.copy()
-            )
-            info.process = process
-            info.pid = process.pid
+            # Create StreamlinkManager instance (your working code!)
+            streamlink_manager = StreamlinkManager(config)
+            
+            logger.info(f"🔑 Using OAuth token: {bool(config.oauth_token)}")
+            if config.oauth_token:
+                logger.info(f"🔑 OAuth token length: {len(config.oauth_token)}")
+            
+            # Update state
             info.state = RecordingState.RECORDING
             
-            logger.info(f"🚀 RECORDING: Streamlink process started with PID {process.pid}")
+            logger.info(f"🚀 RECORDING: Starting streamlink for {streamer_twitch_name}")
             
-            # Start watchdog
-            watchdog_thread = threading.Thread(
-                target=self._watchdog_worker,
-                args=(info,),
-                name=f"watchdog-{info.id}",
-                daemon=True
+            # Use your existing working run_streamlink method!
+            result = streamlink_manager.run_streamlink(
+                user=streamer_twitch_name,
+                recorded_filename=base_path,  # StreamlinkManager will add .ts
+                stop_event=info.stop_event,
+                logger=logger
             )
-            watchdog_thread.start()
             
-            # Wait for process to complete
-            return_code = process.wait()
-            logger.info(f"⏹️ RECORDING: Streamlink process finished with return code {return_code}")
+            logger.info(f"⏹️ RECORDING: Streamlink finished for {info.id}")
+            logger.info(f"📊 Result: {result}")
             
-            if return_code == 0:
-                info.state = RecordingState.COMPLETED
+            # Check the result
+            if result.get("stopped_by_user"):
+                info.state = RecordingState.STOPPING
             else:
-                info.state = RecordingState.FAILED
-                info.error_message = f"Process exited with code {return_code}"
-                
+                # Check if final file exists
+                final_file = result.get("final")
+                if final_file and os.path.exists(final_file) and os.path.getsize(final_file) > 0:
+                    info.state = RecordingState.COMPLETED
+                else:
+                    info.state = RecordingState.FAILED
+                    info.error_message = "No output file or empty file"
+                    
         except Exception as e:
             logger.exception(f"❌ RECORDING: Error in _run_recording for {info.id}: {e}")
             info.state = RecordingState.FAILED
             info.error_message = str(e)
             raise
     
-    def _build_streamlink_command(self, twitch_username: str, quality: str, output_path: str, auth_data: dict) -> list:
-        """Build streamlink command with PROPER OAuth implementation"""
-        cmd = ["streamlink"]
-        
-        # Set log level
-        streamlink_debug = os.getenv("STREAMLINK_DEBUG", "0") in ("1", "true", "True")
-        cmd += ["--loglevel", "debug" if streamlink_debug else "info"]
-        
-        # Add OAuth authentication if available (FIXED)
-        if auth_data and auth_data.get('oauth_token'):
-            token = self._normalize_oauth_token(auth_data['oauth_token'])
-            
-            if token:
-                logger.info(f"🔑 Using OAuth token for authentication (length: {len(token)})")
-                # Use --twitch-api-header instead of --http-header for Twitch-specific auth
-                cmd += ["--twitch-api-header", f"Authorization=OAuth {token}"]
-                
-                # Also add as HTTP cookie for additional compatibility
-                cmd += ["--http-cookie", f"auth-token={token}"]
-            else:
-                logger.warning("⚠️ OAuth token is empty after normalization")
-        else:
-            logger.warning("⚠️ No OAuth token available - recording may have ads")
-        
-        # Add Client-ID if available
-        if auth_data and auth_data.get('client_id'):
-            cmd += ["--http-header", f"Client-ID={auth_data['client_id']}"]
-            logger.info(f"🆔 Added Client-ID header")
-        
-        # Add standard Twitch options for reliability
-        cmd += [
-            "--retry-open", "999999",
-            "--retry-streams", "999999",
-            "--stream-segment-attempts", "10",
-            "--stream-segment-timeout", "20",
-            "--hls-segment-threads", "1",
-            "--twitch-disable-ads",  # This is important for ad prevention
-        ]
-        
-        # Conditionally add --hls-live-restart if enabled (can cause indefinite reconnection)
-        if auth_data and auth_data.get('enable_hls_live_restart'):
-            cmd.append("--hls-live-restart")
-            logger.info("🔄 Added --hls-live-restart flag")
-        
-        # Add extra flags if specified (with sanitization)
-        extra_flags = auth_data.get('extra_flags') if auth_data else None
-        if extra_flags and extra_flags.strip():
-            # Sanitize extra flags - remove potentially problematic ones
-            DISALLOWED_FLAGS = {"--retry-delay", "--hls-timeout", "--hls-segment-timeout"}
-            flag_parts = extra_flags.strip().split()
-            safe_flags = []
-            skip_next = False
-            
-            for i, flag in enumerate(flag_parts):
-                if skip_next:
-                    skip_next = False
-                    continue
-                if flag in DISALLOWED_FLAGS:
-                    skip_next = True  # Skip the flag and its value
-                    continue
-                safe_flags.append(flag)
-            
-            if safe_flags:
-                cmd += safe_flags
-                logger.info(f"🏴 Added extra flags: {' '.join(safe_flags)}")
-        
-        # Add stream URL and output
-        stream_url = f"https://twitch.tv/{twitch_username}"
-        cmd += [stream_url, quality, "-o", output_path]
-        
-        logger.info(f"🎯 Final command structure: streamlink [auth] [options] {stream_url} {quality} -o {output_path}")
-        
-        return cmd
-    
-    def _normalize_oauth_token(self, raw_token: str) -> str:
-        """Normalize OAuth token - remove oauth: prefix if present"""
-        if not raw_token:
-            return ""
-        
-        token = raw_token.strip()
-        
-        # Remove 'oauth:' prefix if present
-        if token.lower().startswith("oauth:"):
-            token = token.split(":", 1)[1].strip()
-        
-        # Remove 'oauth ' prefix if present
-        if token.lower().startswith("oauth "):
-            token = token.split(" ", 1)[1].strip()
-        
-        return token
-    
-    def _watchdog_worker(self, info: RecordingInfo):
-        """Watchdog to monitor recording health"""
-        download_path = get_download_path()
-        ts_path = os.path.join(download_path, f"{info.filename}.ts")
-        
-        last_size = 0
-        last_change = time.time()
-        stall_timeout = int(os.getenv('STALL_TIMEOUT_SECONDS', '480'))  # 8 minutes
-        max_duration = int(os.getenv('MAX_RECORDING_DURATION', '28800'))  # 8 hours
-        
-        logger.info(f"🐕 WATCHDOG: Starting for recording {info.id}")
-        
-        while not info.stop_event.is_set() and info.process and info.process.poll() is None:
-            try:
-                # Check for stop signal
-                if info.stop_event.wait(15):  # Check every 15 seconds
-                    logger.info(f"🐕 WATCHDOG: Stop signal received for recording {info.id}")
-                    break
-                
-                # Check max duration
-                if info.started_at and (datetime.utcnow() - info.started_at).total_seconds() > max_duration:
-                    logger.info(f"🐕 WATCHDOG: Recording {info.id} hit max duration, stopping")
-                    info.stop_event.set()
-                    break
-                
-                # Check file growth (stall detection)
-                current_size = 0
-                if os.path.exists(ts_path):
-                    try:
-                        current_size = os.path.getsize(ts_path)
-                    except OSError:
-                        pass
-                
-                if current_size > last_size:
-                    last_size = current_size
-                    last_change = time.time()
-                elif time.time() - last_change > stall_timeout:
-                    logger.info(f"🐕 WATCHDOG: Recording {info.id} stalled (no growth for {stall_timeout}s), stopping")
-                    info.stop_event.set()
-                    break
-                
-            except Exception as e:
-                logger.exception(f"🐕 WATCHDOG: Error for recording {info.id}: {e}")
-                break
-        
-        logger.info(f"🐕 WATCHDOG: Finished for recording {info.id}")
     
     def _finalize_recording(self, info: RecordingInfo):
         """Finalize recording and update database"""
