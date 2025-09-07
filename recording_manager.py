@@ -455,19 +455,20 @@ def get_download_path():
     return os.getenv('DOWNLOAD_PATH', './download')
 
 
-# Global recording manager instance (will be initialized in app.py)
-recording_manager: Optional[RecordingManager] = None
+# Use Flask's application context instead of global variables
+from flask import current_app
+
+
+def get_recording_manager():
+    """Get the recording manager, creating it if needed"""
+    if not hasattr(current_app, 'recording_manager'):
+        # Initialize if not exists
+        current_app.recording_manager = RecordingManager(current_app._get_current_object(), current_app.extensions['sqlalchemy'].db)
+    return current_app.recording_manager
 
 
 def init_recording_manager(app, db):
-    """Initialize the global recording manager"""
-    global recording_manager
-    recording_manager = RecordingManager(app, db)
-    return recording_manager
-
-
-def get_recording_manager() -> RecordingManager:
-    """Get the global recording manager"""
-    if recording_manager is None:
-        raise RuntimeError("Recording manager not initialized")
-    return recording_manager
+    """Initialize the recording manager and store it on the app"""
+    if not hasattr(app, 'recording_manager'):
+        app.recording_manager = RecordingManager(app, db)
+    return app.recording_manager

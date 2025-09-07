@@ -180,17 +180,22 @@ class StreamMonitor:
                 thread.join(timeout=5)
 
 
-# Global stream monitor instance
-stream_monitor = None
+# Use Flask's application context instead of global variables
+from flask import current_app
 
-def init_stream_monitor(app, db, recording_manager):
-    """Initialize the global stream monitor"""
-    global stream_monitor
-    stream_monitor = StreamMonitor(app, db, recording_manager)
-    return stream_monitor
 
 def get_stream_monitor():
-    """Get the global stream monitor"""
-    if stream_monitor is None:
-        raise RuntimeError("Stream monitor not initialized")
-    return stream_monitor
+    """Get the stream monitor, creating it if needed"""
+    if not hasattr(current_app, 'stream_monitor'):
+        # Initialize if not exists
+        from recording_manager import get_recording_manager
+        recording_manager = get_recording_manager()
+        current_app.stream_monitor = StreamMonitor(current_app._get_current_object(), current_app.extensions['sqlalchemy'].db, recording_manager)
+    return current_app.stream_monitor
+
+
+def init_stream_monitor(app, db, recording_manager):
+    """Initialize the stream monitor and store it on the app"""
+    if not hasattr(app, 'stream_monitor'):
+        app.stream_monitor = StreamMonitor(app, db, recording_manager)
+    return app.stream_monitor
