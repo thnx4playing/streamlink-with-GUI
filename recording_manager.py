@@ -455,20 +455,20 @@ def get_download_path():
     return os.getenv('DOWNLOAD_PATH', './download')
 
 
-# Use Flask's application context instead of global variables
+# Use Flask's extensions pattern (Flask best practice)
 from flask import current_app
 
 
-def get_recording_manager():
-    """Get the recording manager, creating it if needed"""
-    if not hasattr(current_app, 'recording_manager'):
-        # Initialize if not exists
-        current_app.recording_manager = RecordingManager(current_app._get_current_object(), current_app.extensions['sqlalchemy'].db)
-    return current_app.recording_manager
-
-
 def init_recording_manager(app, db):
-    """Initialize the recording manager and store it on the app"""
-    if not hasattr(app, 'recording_manager'):
-        app.recording_manager = RecordingManager(app, db)
-    return app.recording_manager
+    """Initialize recording manager using Flask extensions pattern"""
+    if 'recording_manager' not in app.extensions:
+        app.extensions['recording_manager'] = RecordingManager(app, db)
+    return app.extensions['recording_manager']
+
+
+def get_recording_manager():
+    """Get recording manager from current app"""
+    from flask import current_app
+    if 'recording_manager' not in current_app.extensions:
+        init_recording_manager(current_app, current_app.extensions['sqlalchemy'].db)
+    return current_app.extensions['recording_manager']

@@ -180,22 +180,22 @@ class StreamMonitor:
                 thread.join(timeout=5)
 
 
-# Use Flask's application context instead of global variables
+# Use Flask's extensions pattern (Flask best practice)
 from flask import current_app
 
 
+def init_stream_monitor(app, db, recording_manager):
+    """Initialize stream monitor using Flask extensions pattern"""
+    if 'stream_monitor' not in app.extensions:
+        app.extensions['stream_monitor'] = StreamMonitor(app, db, recording_manager)
+    return app.extensions['stream_monitor']
+
+
 def get_stream_monitor():
-    """Get the stream monitor, creating it if needed"""
-    if not hasattr(current_app, 'stream_monitor'):
-        # Initialize if not exists
+    """Get stream monitor from current app"""
+    from flask import current_app
+    if 'stream_monitor' not in current_app.extensions:
         from recording_manager import get_recording_manager
         recording_manager = get_recording_manager()
-        current_app.stream_monitor = StreamMonitor(current_app._get_current_object(), current_app.extensions['sqlalchemy'].db, recording_manager)
-    return current_app.stream_monitor
-
-
-def init_stream_monitor(app, db, recording_manager):
-    """Initialize the stream monitor and store it on the app"""
-    if not hasattr(app, 'stream_monitor'):
-        app.stream_monitor = StreamMonitor(app, db, recording_manager)
-    return app.stream_monitor
+        init_stream_monitor(current_app, current_app.extensions['sqlalchemy'].db, recording_manager)
+    return current_app.extensions['stream_monitor']
