@@ -3038,16 +3038,23 @@ for _name in _routes_needing_cleanup:
     if _name in app.view_functions:
         app.view_functions[_name] = cleanup_session(app.view_functions[_name])
 
-@app.before_first_request  
+# Global flag to track if monitoring has been started
+_monitoring_started = False
+
+@app.before_request
 def auto_start_monitoring():
     """Auto-start monitoring on first request (works in any deployment scenario)"""
-    try:
-        logger.info("🚀 AUTO-STARTUP: Starting monitoring on first request...")
-        stream_monitor = get_stream_monitor()
-        stream_monitor.start_monitoring_all_active()
-        logger.info("✅ AUTO-STARTUP: Successfully started monitoring all active streamers")
-    except Exception as e:
-        logger.exception(f"❌ AUTO-STARTUP: Error starting stream monitoring: {e}")
+    global _monitoring_started
+    if not _monitoring_started:
+        try:
+            logger.info("🚀 AUTO-STARTUP: Starting monitoring on first request...")
+            stream_monitor = get_stream_monitor()
+            stream_monitor.start_monitoring_all_active()
+            logger.info("✅ AUTO-STARTUP: Successfully started monitoring all active streamers")
+            _monitoring_started = True
+        except Exception as e:
+            logger.exception(f"❌ AUTO-STARTUP: Error starting stream monitoring: {e}")
+            _monitoring_started = True  # Set to True to prevent repeated attempts
 
 if __name__ == '__main__':
     # Create database tables with retry logic
