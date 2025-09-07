@@ -270,32 +270,32 @@ class RecordingManager:
     
     def _run_recording(self, info: RecordingInfo):
         """Run the actual recording process (NO DATABASE ACCESS)"""
-        from app import get_download_path  # Only import functions, not models
+        from app import get_download_path
         
-        # Use the data that was passed from start_recording (no database queries)
-        streamer_twitch_name = info.streamer_twitch_name
-        streamer_quality = info.streamer_quality
-        auth_data = info.auth_data
-        
-        # Build output path
-        download_path = get_download_path()
-        os.makedirs(download_path, exist_ok=True)
-        
-        base_path = os.path.join(download_path, info.filename)
-        ts_path = f"{base_path}.ts"
-        
-        # Build streamlink command (ultra-minimal version)
-        cmd = [
-            "streamlink",
-            f"https://twitch.tv/{streamer_twitch_name}",
-            streamer_quality,
-            "-o", ts_path
-        ]
-        
-        logger.info(f"Starting streamlink for recording {info.id}: {' '.join(cmd)}")
-        
-        # Start process
-        try:
+        try:  # ADD THIS TRY BLOCK
+            # Use the data that was passed from start_recording (no database queries)
+            streamer_twitch_name = info.streamer_twitch_name
+            streamer_quality = info.streamer_quality
+            auth_data = info.auth_data
+            
+            # Build output path
+            download_path = get_download_path()
+            os.makedirs(download_path, exist_ok=True)
+            
+            base_path = os.path.join(download_path, info.filename)
+            ts_path = f"{base_path}.ts"
+            
+            # Build streamlink command (ultra-minimal version)
+            cmd = [
+                "streamlink",
+                f"https://twitch.tv/{streamer_twitch_name}",
+                streamer_quality,
+                "-o", ts_path
+            ]
+            
+            logger.info(f"Starting streamlink for recording {info.id}: {' '.join(cmd)}")  # ADD THIS LOG
+            
+            # Start process
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -307,8 +307,7 @@ class RecordingManager:
             info.pid = process.pid
             info.state = RecordingState.RECORDING
             
-            # Note: We can't update database from here due to app context issues
-            # The finalize method will handle database updates
+            logger.info(f"Streamlink process started with PID {process.pid}")  # ADD THIS LOG
             
             # Start watchdog
             watchdog_thread = threading.Thread(
@@ -321,6 +320,7 @@ class RecordingManager:
             
             # Wait for process to complete
             return_code = process.wait()
+            logger.info(f"Streamlink process finished with return code {return_code}")  # ADD THIS LOG
             
             if return_code == 0:
                 info.state = RecordingState.COMPLETED
@@ -328,7 +328,8 @@ class RecordingManager:
                 info.state = RecordingState.FAILED
                 info.error_message = f"Process exited with code {return_code}"
                 
-        except Exception as e:
+        except Exception as e:  # ADD THIS EXCEPTION HANDLING
+            logger.exception(f"Error in _run_recording for {info.id}: {e}")
             info.state = RecordingState.FAILED
             info.error_message = str(e)
             raise
