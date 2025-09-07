@@ -33,6 +33,9 @@ OFFLINE_GRACE_SECONDS = int(os.getenv("OFFLINE_GRACE_SECONDS", "300"))   # requi
 # Optional: enable streamlink debug logs (much chattier)
 STREAMLINK_DEBUG = os.getenv("STREAMLINK_DEBUG", "0") in ("1","true","True")
 
+# Global flag to track monitoring initialization
+monitoring_initialized = False
+
 # Watchdog helper functions for recording management
 def _safe_terminate(proc: subprocess.Popen, timeout=15):
     """Safely terminate a process with timeout fallback to kill"""
@@ -3038,23 +3041,19 @@ for _name in _routes_needing_cleanup:
     if _name in app.view_functions:
         app.view_functions[_name] = cleanup_session(app.view_functions[_name])
 
-# Global flag to track if monitoring has been started
-_monitoring_started = False
-
 @app.before_request
-def auto_start_monitoring():
-    """Auto-start monitoring on first request (works in any deployment scenario)"""
-    global _monitoring_started
-    if not _monitoring_started:
+def ensure_monitoring_started():
+    """Ensure monitoring is started once on first request"""
+    global monitoring_initialized
+    if not monitoring_initialized:
         try:
-            logger.info("🚀 AUTO-STARTUP: Starting monitoring on first request...")
+            logger.info("🚀 FIRST-REQUEST: Starting monitoring on first request...")
             stream_monitor = get_stream_monitor()
             stream_monitor.start_monitoring_all_active()
-            logger.info("✅ AUTO-STARTUP: Successfully started monitoring all active streamers")
-            _monitoring_started = True
+            monitoring_initialized = True
+            logger.info("✅ FIRST-REQUEST: Successfully started monitoring all active streamers")
         except Exception as e:
-            logger.exception(f"❌ AUTO-STARTUP: Error starting stream monitoring: {e}")
-            _monitoring_started = True  # Set to True to prevent repeated attempts
+            logger.exception(f"❌ FIRST-REQUEST: Error starting stream monitoring: {e}")
 
 if __name__ == '__main__':
     # Create database tables with retry logic
