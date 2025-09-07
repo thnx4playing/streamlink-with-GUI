@@ -1850,6 +1850,16 @@ def debug_step_by_step_recording(streamer_id):
                     stop_event=threading.Event(),
                     filename=recording.filename
                 )
+                
+                # Add the missing attributes
+                info.streamer_twitch_name = streamer.twitch_name
+                info.streamer_quality = streamer.quality or 'best'
+                auth = TwitchAuth.query.first()
+                info.auth_data = {
+                    'oauth_token': auth.oauth_token if auth else None,
+                    'client_id': auth.client_id if auth else None
+                }
+                
                 steps.append("Step 4: ✅ RecordingInfo created")
             except Exception as e:
                 steps.append(f"Step 4: ❌ RecordingInfo error: {str(e)}")
@@ -2038,6 +2048,15 @@ def test_recording_worker(streamer_id):
             stop_event=threading.Event(),
             filename=f"test-{streamer.twitch_name}-debug"
         )
+        
+        # Add the missing attributes
+        info.streamer_twitch_name = streamer.twitch_name
+        info.streamer_quality = streamer.quality or 'best'
+        auth = TwitchAuth.query.first()
+        info.auth_data = {
+            'oauth_token': auth.oauth_token if auth else None,
+            'client_id': auth.client_id if auth else None
+        }
         
         # Capture output by calling the worker method directly
         try:
