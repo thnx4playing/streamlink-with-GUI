@@ -37,6 +37,10 @@ class RecordingInfo:
     thread: Optional[threading.Thread] = None
     filename: str = ""
     error_message: str = ""
+    # Additional data to avoid database queries in thread
+    streamer_twitch_name: str = ""
+    streamer_quality: str = ""
+    auth_data: dict = None
 
 class RecordingManager:
     """
@@ -120,12 +124,16 @@ class RecordingManager:
             # Create new recording in database
             with self.app.app_context():
                 try:
-                    from app import Streamer, Recording  # Import here to avoid circular imports
+                    from app import Streamer, Recording, TwitchAuth  # Import here to avoid circular imports
                     
+                    # GET ALL DATABASE DATA FIRST (before starting thread)
                     streamer = Streamer.query.get(streamer_id)
                     if not streamer:
                         logger.error(f"Streamer {streamer_id} not found")
                         return None
+                    
+                    # Get auth data before starting thread
+                    auth = TwitchAuth.query.first()
                     
                     # Create recording record
                     recording = Recording(
@@ -140,7 +148,7 @@ class RecordingManager:
                     
                     recording_id = recording.id
                     
-                    # Create recording info
+                    # Create recording info with all the data needed
                     info = RecordingInfo(
                         id=recording_id,
                         streamer_id=streamer_id,
@@ -149,6 +157,14 @@ class RecordingManager:
                         stop_event=threading.Event(),
                         filename=recording.filename
                     )
+                    
+                    # Add the database data to the info object so thread doesn't need to query
+                    info.streamer_twitch_name = streamer.twitch_name
+                    info.streamer_quality = streamer.quality
+                    info.auth_data = {
+                        'oauth_token': auth.oauth_token if auth else None,
+                        'client_id': auth.client_id if auth else None
+                    }
                     
                     # Start recording thread
                     thread = threading.Thread(
@@ -252,13 +268,13 @@ class RecordingManager:
             self._finalize_recording(info)
     
     def _run_recording(self, info: RecordingInfo):
-        """Run the actual recording process"""
-        from app import Streamer, TwitchAuth, get_download_path  # Import here to avoid circular imports
+        """Run the actual recording process (NO DATABASE ACCESS)"""
+        from app import get_download_path  # Only import functions, not models
         
-        # Get streamer info
-        streamer = Streamer.query.get(info.streamer_id)
-        if not streamer:
-            raise Exception(f"Streamer {info.streamer_id} not found")
+        # Use the data that was passed from start_recording (no database queries)
+        streamer_twitch_name = info.streamer_twitch_name
+        streamer_quality = info.streamer_quality
+        auth_data = info.auth_data
         
         # Build output path
         download_path = get_download_path()
@@ -267,9 +283,13 @@ class RecordingManager:
         base_path = os.path.join(download_path, info.filename)
         ts_path = f"{base_path}.ts"
         
-        # Build streamlink command
-        auth = TwitchAuth.query.first()
-        cmd = self._build_streamlink_cmd(streamer, ts_path, auth)
+        # Build streamlink command (ultra-minimal version)
+        cmd = [
+            "streamlink",
+            f"https://twitch.tv/{streamer_twitch_name}",
+            streamer_quality,
+            "-o", ts_path
+        ]
         
         logger.info(f"Starting streamlink for recording {info.id}: {' '.join(cmd)}")
         
@@ -286,11 +306,8 @@ class RecordingManager:
             info.pid = process.pid
             info.state = RecordingState.RECORDING
             
-            # Update database with PID
-            recording = self.db.session.get(Recording, info.id)
-            if recording:
-                recording.pid = process.pid
-                self.db.session.commit()
+            # Note: We can't update database from here due to app context issues
+            # The finalize method will handle database updates
             
             # Start watchdog
             watchdog_thread = threading.Thread(
@@ -417,17 +434,6 @@ class RecordingManager:
         timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
         return f"{streamer.twitch_name} - {timestamp}"
     
-    def _build_streamlink_cmd(self, streamer, output_path: str, auth) -> list:
-        """Build streamlink command (ultra-minimal version)"""
-        # Just the basics that we know work from your successful test
-        cmd = [
-            "streamlink",
-            f"https://twitch.tv/{streamer.twitch_name}",
-            streamer.quality,
-            "-o", output_path
-        ]
-        
-        return cmd
     
     def shutdown(self):
         """Shutdown the recording manager"""
