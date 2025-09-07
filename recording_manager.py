@@ -137,7 +137,13 @@ class RecordingManager:
             
             # Create new recording in database
             try:
-                from app import Streamer, Recording, TwitchAuth  # Import here to avoid circular imports
+                # Use model registry to avoid circular imports
+                models = self.app.extensions.get('models', {})
+                Streamer = models.get('Streamer')
+                Recording = models.get('Recording')
+                TwitchAuth = models.get('TwitchAuth')
+                if Streamer is None or Recording is None or TwitchAuth is None:
+                    raise RuntimeError("Models not registered in app.extensions['models']")
                 
                 # GET ALL DATABASE DATA FIRST (before starting thread)
                 streamer = Streamer.query.get(streamer_id)
