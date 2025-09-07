@@ -294,13 +294,23 @@ class RecordingManager:
             base_path = os.path.join(download_path, info.filename)
             ts_path = f"{base_path}.ts"
             
-            # Build streamlink command (ultra-minimal version)
-            cmd = [
-                "streamlink",
-                f"https://twitch.tv/{streamer_twitch_name}",
-                streamer_quality,
-                "-o", ts_path
-            ]
+            # Build streamlink command with OAuth token
+            cmd = ["streamlink"]
+
+            # Add OAuth token if available
+            if info.auth_data and info.auth_data.get('oauth_token'):
+                token = info.auth_data['oauth_token'].strip()
+                # Clean token format
+                if token.lower().startswith("oauth:"):
+                    token = token.split(":", 1)[1].strip()
+                if token.lower().startswith("oauth "):
+                    token = token.split(" ", 1)[1].strip()
+                
+                cmd += ["--twitch-disable-ads"]
+                cmd += ["--http-header", f"Authorization=OAuth {token}"]
+
+            # Add stream URL and output
+            cmd += [f"https://twitch.tv/{streamer_twitch_name}", streamer_quality, "-o", ts_path]
             
             logger.info(f"Starting streamlink for recording {info.id}: {' '.join(cmd)}")  # ADD THIS LOG
             
