@@ -258,15 +258,21 @@ class RecordingManager:
     
     def _recording_worker(self, info: RecordingInfo):
         """Main recording worker thread"""
+        logger.info(f"ENTERING _recording_worker for recording {info.id}")  # ADD THIS
         try:
+            logger.info(f"About to enter app context for recording {info.id}")  # ADD THIS
             with self.app.app_context():
+                logger.info(f"Inside app context, calling _run_recording for {info.id}")  # ADD THIS
                 self._run_recording(info)
+            logger.info(f"_run_recording completed for recording {info.id}")  # ADD THIS
         except Exception as e:
             logger.exception(f"Recording worker error for {info.id}: {e}")
             info.state = RecordingState.FAILED
             info.error_message = str(e)
         finally:
+            logger.info(f"Entering finally block for recording {info.id}")  # ADD THIS
             self._finalize_recording(info)
+            logger.info(f"_finalize_recording completed for recording {info.id}")  # ADD THIS
     
     def _run_recording(self, info: RecordingInfo):
         """Run the actual recording process (NO DATABASE ACCESS)"""
