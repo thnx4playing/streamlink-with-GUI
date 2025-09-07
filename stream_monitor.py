@@ -60,7 +60,6 @@ class StreamMonitor:
     
     def start_monitoring_all_active(self):
         """Start monitoring all active streamers"""
-        # Add retry logic for startup timing issues
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -68,11 +67,15 @@ class StreamMonitor:
                     from app import Streamer  # Import here to avoid circular imports
                     active_streamers = Streamer.query.filter_by(is_active=True).all()
                     
-                    for streamer in active_streamers:
-                        self.start_monitoring(streamer.id)
-                        
-                    logger.info(f"Started monitoring {len(active_streamers)} active streamers")
-                    return  # Success - exit the retry loop
+                    # Store the streamer IDs to start monitoring outside the app context
+                    streamer_ids = [streamer.id for streamer in active_streamers]
+                    
+                # Start monitoring outside the app context but let each thread handle its own context
+                for streamer_id in streamer_ids:
+                    self.start_monitoring(streamer_id)
+                    
+                logger.info(f"Started monitoring {len(streamer_ids)} active streamers")
+                return  # Success - exit the retry loop
                     
             except Exception as e:
                 logger.warning(f"Attempt {attempt + 1} failed to start monitoring: {e}")
