@@ -2134,6 +2134,19 @@ def test_streamlink_variations(streamer_name):
     
     return jsonify(results)
 
+@app.route('/api/debug/force-startup-monitoring', methods=['POST'])
+def force_startup_monitoring():
+    """Manual endpoint to restart monitoring"""
+    try:
+        logger.info("🔧 MANUAL-STARTUP: Force starting monitoring...")
+        stream_monitor = get_stream_monitor()
+        stream_monitor.start_monitoring_all_active()
+        logger.info("✅ MANUAL-STARTUP: Successfully started monitoring")
+        return jsonify({'message': 'Monitoring started successfully', 'success': True})
+    except Exception as e:
+        logger.exception(f"❌ MANUAL-STARTUP: Error starting monitoring: {e}")
+        return jsonify({'error': str(e), 'success': False}), 500
+
 @app.route('/api/recordings', methods=['GET'])
 @cleanup_session
 def get_recordings():
@@ -3024,6 +3037,17 @@ _routes_needing_cleanup = [
 for _name in _routes_needing_cleanup:
     if _name in app.view_functions:
         app.view_functions[_name] = cleanup_session(app.view_functions[_name])
+
+@app.before_first_request  
+def auto_start_monitoring():
+    """Auto-start monitoring on first request (works in any deployment scenario)"""
+    try:
+        logger.info("🚀 AUTO-STARTUP: Starting monitoring on first request...")
+        stream_monitor = get_stream_monitor()
+        stream_monitor.start_monitoring_all_active()
+        logger.info("✅ AUTO-STARTUP: Successfully started monitoring all active streamers")
+    except Exception as e:
+        logger.exception(f"❌ AUTO-STARTUP: Error starting stream monitoring: {e}")
 
 if __name__ == '__main__':
     # Create database tables with retry logic
