@@ -60,18 +60,27 @@ class StreamMonitor:
     
     def start_monitoring_all_active(self):
         """Start monitoring all active streamers"""
-        with self.app.app_context():
+        # Add retry logic for startup timing issues
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                from app import Streamer  # Import here to avoid circular imports
-                active_streamers = Streamer.query.filter_by(is_active=True).all()
-                
-                for streamer in active_streamers:
-                    self.start_monitoring(streamer.id)
+                with self.app.app_context():
+                    from app import Streamer  # Import here to avoid circular imports
+                    active_streamers = Streamer.query.filter_by(is_active=True).all()
                     
-                logger.info(f"Started monitoring {len(active_streamers)} active streamers")
-                
+                    for streamer in active_streamers:
+                        self.start_monitoring(streamer.id)
+                        
+                    logger.info(f"Started monitoring {len(active_streamers)} active streamers")
+                    return  # Success - exit the retry loop
+                    
             except Exception as e:
-                logger.exception(f"Error starting monitoring for all active streamers: {e}")
+                logger.warning(f"Attempt {attempt + 1} failed to start monitoring: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)  # Wait 1 second before retry
+                else:
+                    logger.exception(f"Error starting monitoring for all active streamers after {max_retries} attempts: {e}")
+                    # Don't raise the exception - let the app continue
     
     def stop_all_monitoring(self):
         """Stop monitoring all streamers"""
