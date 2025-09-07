@@ -270,7 +270,10 @@ class RecordingManager:
     
     def _run_recording(self, info: RecordingInfo):
         """Run the actual recording process (NO DATABASE ACCESS)"""
+        logger.info(f"ENTERING _run_recording for recording {info.id}")  # ADD THIS AS FIRST LINE
+        
         from app import get_download_path
+        logger.info(f"Import successful for recording {info.id}")  # ADD THIS TOO
         
         try:  # ADD THIS TRY BLOCK
             # Use the data that was passed from start_recording (no database queries)
