@@ -418,31 +418,32 @@ class RecordingManager:
         return f"{streamer.twitch_name} - {timestamp}"
     
     def _build_streamlink_cmd(self, streamer, output_path: str, auth) -> list:
-        """Build streamlink command (simplified)"""
+        """Build streamlink command (simplified and working version)"""
         cmd = ["streamlink"]
+        
+        # Basic logging
         cmd += ["--loglevel", "info"]
         
-        # Add basic auth if available (but it's optional)
+        # Simple auth (optional - streamlink works without it for public streams)
         if auth and auth.oauth_token:
             token = auth.oauth_token.strip()
+            # Clean up token format
             if token.lower().startswith("oauth:"):
                 token = token.split(":", 1)[1].strip()
             if token.lower().startswith("oauth "):
                 token = token.split(" ", 1)[1].strip()
             
-            cmd += [f"--twitch-api-header=Authorization=OAuth {token}"]
-            cmd += ["--http-cookie", f"auth-token={token}"]
+            if token:  # Only add if we have a clean token
+                cmd += ["--twitch-disable-ads"]
+                cmd += ["--http-header", f"Authorization=OAuth {token}"]
         
-        if auth and auth.client_id:
-            cmd += ["--http-header", f"Client-ID={auth.client_id}"]
-        
-        # Simplified reliability options (remove problematic flags)
+        # Minimal reliability options (avoid problematic flags)
         cmd += [
-            "--retry-streams", "5",  # Reduced from 999999
-            "--stream-segment-attempts", "3"  # Reduced from 10
+            "--retry-streams", "10",        # Reasonable retry count
+            "--stream-segment-attempts", "3" # Conservative segment attempts
         ]
         
-        # Stream URL and quality
+        # Stream URL, quality, and output
         cmd += [f"https://twitch.tv/{streamer.twitch_name}", streamer.quality, "-o", output_path]
         
         return cmd
