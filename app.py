@@ -341,6 +341,24 @@ class Recording(db.Model):
     session_guid = db.Column(db.String(36), default=lambda: str(uuid.uuid4()))
     status_detail = db.Column(db.String(255))  # Details about why recording stopped (e.g., "Stopped by user", "Stream offline", "No data")
 
+    @property
+    def duration_seconds(self) -> int:
+        """Calculate duration in seconds, works for both in-progress and completed recordings"""
+        if not self.started_at:
+            return 0
+        # normalize to aware UTC
+        start = self.started_at.replace(tzinfo=timezone.utc) if self.started_at.tzinfo is None else self.started_at
+        end = (self.ended_at.replace(tzinfo=timezone.utc) if self.ended_at and self.ended_at.tzinfo is None else self.ended_at) or datetime.now(timezone.utc)
+        return max(0, int((end - start).total_seconds()))
+
+    @property
+    def duration_hms(self) -> str:
+        """Format duration as HH:MM:SS"""
+        s = self.duration_seconds
+        h, rem = divmod(s, 3600)
+        m, s = divmod(rem, 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
 class ConversionSettings(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     volume_path = db.Column(db.String(500))
@@ -2245,12 +2263,6 @@ def get_recordings():
             
             streamer = Streamer.query.get(r.streamer_id)
             
-            # Calculate current duration for active recordings
-            if r.status == 'recording' and r.started_at:
-                current_duration = int((datetime.utcnow() - r.started_at).total_seconds())
-            else:
-                current_duration = r.duration or 0
-            
             recordings_data.append({
                 'id': r.id,
                 'streamer_id': r.streamer_id,
@@ -2262,7 +2274,8 @@ def get_recordings():
                 'started_at': r.started_at.isoformat() + 'Z',
                 'ended_at': r.ended_at.isoformat() + 'Z' if r.ended_at else None,
                 'file_size': r.file_size,
-                'duration': current_duration,
+                'duration_seconds': r.duration_seconds,
+                'duration': r.duration_hms,
                 'pid': r.pid
             })
         
@@ -2374,12 +2387,6 @@ def get_active_recordings():
             if not recording or not streamer:
                 continue
             
-            # Calculate current duration for active recordings
-            if info.started_at:
-                current_duration = int((datetime.utcnow() - info.started_at).total_seconds())
-            else:
-                current_duration = 0
-            
             recordings_data.append({
                 'id': recording.id,
                 'streamer_id': recording.streamer_id,
@@ -2390,7 +2397,8 @@ def get_active_recordings():
                 'status': recording.status,
                 'started_at': recording.started_at.isoformat() + 'Z',
                 'file_size': recording.file_size,
-                'duration': current_duration
+                'duration_seconds': recording.duration_seconds,
+                'duration': recording.duration_hms
             })
         
         # Calculate pagination info

@@ -1585,7 +1585,7 @@
                     const row = document.createElement('tr');
                     const status = getRecordingStatus(recording);
                     const statusClass = getStatusBadgeClass(status);
-                    const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                    const duration = recording.duration || '-';
                     const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                     
                     const titleText = `${escapeHTML(recording.title || 'No title')}${recording.pid ? ` • pid ${recording.pid}` : ''}`;
@@ -1797,7 +1797,7 @@
                 
                 data.recordings.forEach((recording, index) => {
                     const row = document.createElement('tr');
-                    const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                    const duration = recording.duration || '-';
                     const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
                     const status = getRecordingStatus(recording);
                     const statusClass = getStatusBadgeClass(status);
@@ -2031,7 +2031,7 @@
                 if (data.recordings && data.recordings.length > 0) {
                     data.recordings.forEach((recording) => {
                         const row = document.createElement('tr');
-                        const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                        const duration = recording.duration || '-';
                         const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                         
                         const titleText = escapeHTML(recording.title || 'No title');
@@ -2105,7 +2105,7 @@
                 if (data.recordings && data.recordings.length > 0) {
                     data.recordings.forEach((recording, index) => {
                         const row = document.createElement('tr');
-                        const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                        const duration = recording.duration || '-';
                         const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
                         const status = getRecordingStatus(recording);
                         const statusClass = getStatusBadgeClass(status);
@@ -2424,7 +2424,7 @@
                 
                 data.recordings.forEach((recording) => {
                     const row = document.createElement('tr');
-                    const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                    const duration = recording.duration || '-';
                     const streamerName = recording.streamer_name || recording.streamer_id || 'Unknown';
                     
                     const titleText = escapeHTML(recording.title || 'No title');
@@ -2990,7 +2990,7 @@
                     data.recordings.forEach((recording, index) => {
                         console.log(`Processing recording ${index + 1}:`, recording);
                         const row = document.createElement('tr');
-                        const duration = recording.duration ? formatDuration(recording.duration) : '-';
+                        const duration = recording.duration || '-';
                         const fileSize = recording.file_size ? formatFileSize(recording.file_size) : '-';
                         const status = getRecordingStatus(recording);
                         const statusClass = getStatusBadgeClass(status);

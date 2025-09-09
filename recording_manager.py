@@ -389,7 +389,11 @@ class RecordingManager:
         
         try:
             with self.app.app_context():
-                from app import Recording  # Import here to avoid circular imports
+                # Use model registry to avoid circular imports
+                models = self.app.extensions.get('models', {})
+                Recording = models.get('Recording')
+                if Recording is None:
+                    raise RuntimeError("Recording model not registered in app.extensions['models']")
                 
                 recording = Recording.query.get(info.id)
                 if recording:
