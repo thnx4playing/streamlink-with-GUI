@@ -1,0 +1,52 @@
+stages:
+  - build
+
+variables:
+  IMAGE_NAME: container.home.alnet.org/alnet/twitch-stuff/streamlink-with-GUI
+  BUILDAH_FORMAT: docker
+  BUILDAH_ISOLATION: chroot
+  BUILDAH_IMAGE: container.home.alnet.org/3rd-party/library/buildah/stable:latest
+
+# Build and push on commits to main
+build-main:
+  stage: build
+  image: $BUILDAH_IMAGE
+  #before_script:
+  #  - buildah login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    # Build with multiple tags
+    - buildah build -t $IMAGE_NAME:latest -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
+    # Push both tags
+    - buildah push $IMAGE_NAME:latest
+    - buildah push $IMAGE_NAME:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+
+# Build and push tagged releases
+build-tag:
+  stage: build
+  image: $BUILDAH_IMAGE
+  #before_script:
+  #  - buildah login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    # Build with version tag
+    - buildah build -t $IMAGE_NAME:$CI_COMMIT_TAG -t $IMAGE_NAME:latest .
+    # Push both tags
+    - buildah push $IMAGE_NAME:$CI_COMMIT_TAG
+    - buildah push $IMAGE_NAME:latest
+  only:
+    - tags
+
+# Optional: Build on feature branches for testing (don't push latest)
+build-branch:
+  stage: build
+  image: $BUILDAH_IMAGE
+  #before_script:
+  #  - buildah login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    # Build with branch name as tag
+    - buildah build -t $IMAGE_NAME:$CI_COMMIT_REF_SLUG .
+    - buildah push $IMAGE_NAME:$CI_COMMIT_REF_SLUG
+  except:
+    - main
+    - tags

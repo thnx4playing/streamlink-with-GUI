@@ -11,6 +11,7 @@ import subprocess
 import logging
 import shutil
 import uuid
+import re
 from datetime import datetime, timezone
 from typing import Dict, Optional, Set, Tuple
 from dataclasses import dataclass
@@ -160,11 +161,28 @@ class RecordingManager:
                     logger.info(f"🔑 Has OAuth token: {bool(auth.oauth_token)}")
                     logger.info(f"🔑 Has Client ID: {bool(auth.client_id)}")
                 
-                # Create recording record
+
+                # Try to get the Twitch title before recording
+                from twitch_manager import TwitchManager, StreamStatus
+                stream_title = ''
+                try:
+                    config_models = self.app.extensions.get('models', {})
+                    AppConfig = config_models.get('AppConfig')
+                    # Build a config object like how other parts do
+                    if AppConfig:
+                        config = AppConfig(streamer)
+                        twitch_manager = TwitchManager(config)
+                        status, title = twitch_manager.check_user(streamer.twitch_name)
+                        if status == StreamStatus.ONLINE and title:
+                            stream_title = title
+                except Exception as e:
+                    logger.warning(f"Could not get stream title before recording: {e}")
+
+                # Create recording record that now includes the stream title in the file name
                 recording = Recording(
                     streamer_id=streamer_id,
-                    filename=self._make_filename(streamer),
-                    title="",  # Will be updated when stream info is fetched
+                    filename=self._make_filename(streamer, stream_title),
+                    title=stream_title,
                     status='recording',
                     started_at=datetime.utcnow()
                 )
@@ -472,10 +490,26 @@ class RecordingManager:
             
             logger.debug(f"🧹 Cleaned up recording {recording_id}")
     
-    def _make_filename(self, streamer) -> str:
-        """Generate filename for recording"""
+    #def _make_filename(self, streamer) -> str:
+    #    """Generate filename for recording"""
+    #    timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
+    #    return f"{streamer.twitch_name} - {timestamp}"
+
+    def _make_filename(self, streamer, stream_title: str = "") -> str:
+        """Generate filename for recording including Twitch title."""
         timestamp = datetime.now().strftime('%Y-%m-%d %H-%M-%S')
-        return f"{streamer.twitch_name} - {timestamp}"
+
+        # Sanitize the title for filenames (remove bad characters)
+        safe_title = re.sub(r"[^\w\s._-]", "", stream_title).strip()
+        # Avoid overly long filenames
+        if len(safe_title) > 150:
+            safe_title = safe_title[:150]
+
+        if safe_title:
+            return f"{streamer.twitch_name} - {timestamp} - {safe_title}"
+        else:
+            return f"{streamer.twitch_name} - {timestamp}"
+
     
     def shutdown(self):
         """Shutdown the recording manager"""

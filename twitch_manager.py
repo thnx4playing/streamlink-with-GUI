@@ -130,10 +130,12 @@ class TwitchManager:
             if not user_info:
                 return StreamStatus.OFFLINE, ""
 
-            stream_info = self.get_from_twitch('get_streams', user_id=user_info.id)
+            stream_info = self.get_from_twitch('get_streams', user_id=[user_info.id])
+
             if not stream_info:
                 return StreamStatus.OFFLINE, ""
 
+            
             game_id = stream_info.game_id
             title = stream_info.title or ""
             
